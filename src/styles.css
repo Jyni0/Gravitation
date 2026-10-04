@@ -1,0 +1,706 @@
+@import "tailwindcss";
+
+/* ============ Singularity Design Tokens ============
+   Themes via [data-theme] on <html>. All components use Tailwind
+   utilities with var(--token) arbitrary values, so every theme
+   applies everywhere. */
+
+:root {
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+[data-theme="dark"] {
+  --bg-app: #101010;
+  --bg-sidebar: #181818;
+  --bg-titlebar: #181818;
+  --bg-surface: #1c1c1c;
+  --bg-input: #212124;
+  --bg-elevated: #2A2A2E;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text-main: #E4E4E7;
+  --text-muted: #6e6e6e;
+  --text-dim: #71717A;
+  --accent: #388BFD;
+  --accent-hover: #007ACC;
+  --diff-add: #3FB950;
+  --diff-del: #F85149;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --row-solid: #181818;
+  --row-solid-hover: #242424;
+  --row-solid-gradient: #242424;
+}
+[data-theme="light"] {
+  --bg-app: #F8F9FA;
+  --bg-sidebar: #F1F3F5;
+  --bg-titlebar: #F1F3F5;
+  --bg-surface: #FFFFFF;
+  --bg-input: #E9ECEF;
+  --bg-elevated: #DEE2E6;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-soft: rgba(0, 0, 0, 0.08);
+  --text-main: #1A1A1A;
+  --text-muted: #495057;
+  --text-dim: #6C757D;
+  --accent: #0969DA;
+  --accent-hover: #0A58CA;
+  --diff-add: #1A7F37;
+  --diff-del: #CF222E;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.12);
+  --hover-bg: rgba(0, 0, 0, 0.05);
+  --row-solid: #F1F3F5;
+  --row-solid-hover: #E5E7E9;
+  --row-solid-gradient: #E5E7E9;
+}
+[data-theme="slate"] {
+  --bg-app: #0F172A;
+  --bg-sidebar: #0B1120;
+  --bg-titlebar: #0B1120;
+  --bg-surface: #1E293B;
+  --bg-input: #334155;
+  --bg-elevated: #475569;
+  --border: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text-main: #F8FAFC;
+  --text-muted: #94A3B8;
+  --text-dim: #64748B;
+  --accent: #0EA5E9;
+  --accent-hover: #0284C7;
+  --diff-add: #10B981;
+  --diff-del: #F43F5E;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --row-solid: #0B1120;
+  --row-solid-hover: #1A2131;
+  --row-solid-gradient: #1A2131;
+}
+[data-theme="amoled"] {
+  --bg-app: #000000;
+  --bg-sidebar: #050505;
+  --bg-titlebar: #050505;
+  --bg-surface: #111111;
+  --bg-input: #161616;
+  --bg-elevated: #222222;
+  --border: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --text-main: #EDEDED;
+  --text-muted: #8A8A8A;
+  --text-dim: #5F5F5F;
+  --accent: #3B82F6;
+  --accent-hover: #2563EB;
+  --diff-add: #22C55E;
+  --diff-del: #EF4444;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.8);
+  --hover-bg: rgba(255, 255, 255, 0.07);
+  --row-solid: #050505;
+  --row-solid-hover: #171717;
+  --row-solid-gradient: #171717;
+}
+/* Synthwave: deep plum night with neon pink and cyan glow. */
+[data-theme="vibe"] {
+  --bg-app: #12081F;
+  --bg-sidebar: #1A0B2E;
+  --bg-titlebar: #1A0B2E;
+  --bg-surface: #221039;
+  --bg-input: #2C1548;
+  --bg-elevated: #3A1D5C;
+  --border: rgba(255, 90, 197, 0.18);
+  --border-soft: rgba(255, 90, 197, 0.10);
+  --text-main: #F5E9FF;
+  --text-muted: #B497D6;
+  --text-dim: #8B6FB0;
+  --accent: #FF5AC5;
+  --accent-hover: #FF7AD1;
+  --diff-add: #3DF5C2;
+  --diff-del: #FF4D6D;
+  --shadow-popup: 0 10px 34px rgba(255, 90, 197, 0.28), 0 4px 18px rgba(18, 8, 31, 0.6);
+  --hover-bg: rgba(255, 90, 197, 0.10);
+  --row-solid: #1A0B2E;
+  --row-solid-hover: #2C1548;
+  --row-solid-gradient: #2C1548;
+}
+
+/* ---- Minimal global layer ----
+   Lives in @layer base so Tailwind utilities (cascade layers) always win. */
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* NOTE: root font-size stays 16px so Tailwind's rem-based scale
+     (--spacing: 0.25rem → h-8 = 32px) is exact. App text sizing is
+     done with explicit px utilities. */
+  html {
+    height: 100%;
+    background: var(--bg-app);
+  }
+
+  body, #root {
+    height: 100%;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--text-main);
+    background: var(--bg-app);
+    overflow: hidden;
+  }
+
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  input, textarea, select { font: inherit; }
+}
+
+/* Native scrollbars are fully disabled — the app draws its own overlay bar.
+   This kills WebView2/Edge "fluent" bars: no arrows, no width jump, no layout shift. */
+.no-native-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.no-native-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Textareas (PEM keys, scripts, the prompt) scroll internally — the native
+   bar is hidden and the overlay thumb is drawn by React on top instead. */
+textarea {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+textarea::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* xterm.js keeps its own scroll viewport; repaint its bar to look exactly
+   like the app's overlay thumb (same width, radius and translucency). */
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+}
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 9999px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+}
+
+/* Custom overlay scrollbar thumb — hugs the very right edge (1px inset) */
+.scroll-thumb {
+  position: absolute;
+  right: 1px;
+  width: 6px;
+  border-radius: 9999px;
+  background: rgba(128, 128, 128, 0.3);
+  transition: background 0.15s ease, opacity 0.2s ease;
+  z-index: 30;
+}
+.scroll-thumb:hover,
+.scroll-thumb--active { background: rgba(128, 128, 128, 0.55); }
+/* Horizontal variant — hugs the bottom edge (1px inset). */
+.scroll-thumb--h {
+  right: auto;
+  top: auto;
+  bottom: 1px;
+  height: 6px;
+  width: auto;
+}
+
+/* ---- Extended palette — editor-classic themes ----
+   Each block is COMPLETE (all tokens): hover/row tokens live with the
+   colors so a theme can never half-apply. */
+
+/* One Dark Pro (Atom One Dark) */
+[data-theme="one-dark-pro"] {
+  --bg-app: #21252B;
+  --bg-sidebar: #272C33;
+  --bg-titlebar: #272C33;
+  --bg-surface: #282C34;
+  --bg-input: #2C313A;
+  --bg-elevated: #333842;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --text-main: #D7DAE0;
+  --text-muted: #9DA5B4;
+  --text-dim: #6B717D;
+  --accent: #61AFEF;
+  --accent-hover: #4F9FE8;
+  --diff-add: #98C379;
+  --diff-del: #E06C75;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --row-solid: #272C33;
+  --row-solid-hover: #2C313A;
+  --row-solid-gradient: #2C313A;
+}
+/* Dracula */
+[data-theme="dracula"] {
+  --bg-app: #21222C;
+  --bg-sidebar: #2D2F3C;
+  --bg-titlebar: #2D2F3C;
+  --bg-surface: #282A36;
+  --bg-input: #343746;
+  --bg-elevated: #44475A;
+  --border: rgba(248, 248, 242, 0.10);
+  --border-soft: rgba(248, 248, 242, 0.06);
+  --text-main: #F8F8F2;
+  --text-muted: #BFC7D5;
+  --text-dim: #6272A4;
+  --accent: #BD93F9;
+  --accent-hover: #AA80F0;
+  --diff-add: #50FA7B;
+  --diff-del: #FF5555;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(189, 147, 249, 0.10);
+  --row-solid: #2D2F3C;
+  --row-solid-hover: #343746;
+  --row-solid-gradient: #343746;
+}
+/* GitHub Dark */
+[data-theme="github-dark"] {
+  --bg-app: #010409;
+  --bg-sidebar: #0D1117;
+  --bg-titlebar: #0D1117;
+  --bg-surface: #0D1117;
+  --bg-input: #161B22;
+  --bg-elevated: #21262D;
+  --border: rgba(240, 246, 252, 0.10);
+  --border-soft: rgba(240, 246, 252, 0.06);
+  --text-main: #E6EDF3;
+  --text-muted: #9198A1;
+  --text-dim: #6E7681;
+  --accent: #2F81F7;
+  --accent-hover: #1F6FEB;
+  --diff-add: #3FB950;
+  --diff-del: #F85149;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.6);
+  --hover-bg: rgba(240, 246, 252, 0.06);
+  --row-solid: #0D1117;
+  --row-solid-hover: #161B22;
+  --row-solid-gradient: #161B22;
+}
+/* GitHub Light */
+[data-theme="github-light"] {
+  --bg-app: #F6F8FA;
+  --bg-sidebar: #ECEEF1;
+  --bg-titlebar: #ECEEF1;
+  --bg-surface: #FFFFFF;
+  --bg-input: #F6F8FA;
+  --bg-elevated: #EAEEF2;
+  --border: rgba(31, 35, 40, 0.15);
+  --border-soft: rgba(31, 35, 40, 0.08);
+  --text-main: #1F2328;
+  --text-muted: #59636E;
+  --text-dim: #818B98;
+  --accent: #0969DA;
+  --accent-hover: #0550AE;
+  --diff-add: #1A7F37;
+  --diff-del: #CF222E;
+  --shadow-popup: 0 10px 30px rgba(31, 35, 40, 0.12);
+  --hover-bg: rgba(31, 35, 40, 0.05);
+  --row-solid: #ECEEF1;
+  --row-solid-hover: #EAEEF2;
+  --row-solid-gradient: #EAEEF2;
+}
+/* Tokyo Night */
+[data-theme="tokyo-night"] {
+  --bg-app: #16161E;
+  --bg-sidebar: #1D1E2B;
+  --bg-titlebar: #1D1E2B;
+  --bg-surface: #1A1B26;
+  --bg-input: #1F2335;
+  --bg-elevated: #292E42;
+  --border: rgba(192, 202, 245, 0.10);
+  --border-soft: rgba(192, 202, 245, 0.06);
+  --text-main: #C0CAF5;
+  --text-muted: #9AA5CE;
+  --text-dim: #565F89;
+  --accent: #7AA2F7;
+  --accent-hover: #6B91E8;
+  --diff-add: #9ECE6A;
+  --diff-del: #F7768E;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(122, 162, 247, 0.10);
+  --row-solid: #1D1E2B;
+  --row-solid-hover: #1F2335;
+  --row-solid-gradient: #1F2335;
+}
+/* Monokai Pro */
+[data-theme="monokai-pro"] {
+  --bg-app: #19181A;
+  --bg-sidebar: #252326;
+  --bg-titlebar: #252326;
+  --bg-surface: #2D2A2E;
+  --bg-input: #363438;
+  --bg-elevated: #423F46;
+  --border: rgba(252, 246, 233, 0.09);
+  --border-soft: rgba(252, 246, 233, 0.05);
+  --text-main: #FCF6E3;
+  --text-muted: #C1C0BC;
+  --text-dim: #727072;
+  --accent: #FFD866;
+  --accent-hover: #F5C94F;
+  --diff-add: #A9DC76;
+  --diff-del: #FF6188;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(255, 216, 102, 0.08);
+  --row-solid: #252326;
+  --row-solid-hover: #363438;
+  --row-solid-gradient: #363438;
+}
+/* Solarized Dark */
+[data-theme="solarized-dark"] {
+  --bg-app: #00212B;
+  --bg-sidebar: #052C38;
+  --bg-titlebar: #052C38;
+  --bg-surface: #002B36;
+  --bg-input: #073642;
+  --bg-elevated: #0E4150;
+  --border: rgba(147, 161, 161, 0.15);
+  --border-soft: rgba(147, 161, 161, 0.08);
+  --text-main: #93A1A1;
+  --text-muted: #839496;
+  --text-dim: #586E75;
+  --accent: #268BD2;
+  --accent-hover: #1E77B8;
+  --diff-add: #859900;
+  --diff-del: #DC322F;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.6);
+  --hover-bg: rgba(147, 161, 161, 0.08);
+  --row-solid: #052C38;
+  --row-solid-hover: #073642;
+  --row-solid-gradient: #073642;
+}
+/* Solarized Light */
+[data-theme="solarized-light"] {
+  --bg-app: #EAE3CB;
+  --bg-sidebar: #E3DEC7;
+  --bg-titlebar: #E3DEC7;
+  --bg-surface: #FDF6E3;
+  --bg-input: #F5EEDC;
+  --bg-elevated: #EEE8D5;
+  --border: rgba(101, 123, 131, 0.18);
+  --border-soft: rgba(101, 123, 131, 0.10);
+  --text-main: #586E75;
+  --text-muted: #657B83;
+  --text-dim: #93A1A1;
+  --accent: #268BD2;
+  --accent-hover: #1E77B8;
+  --diff-add: #859900;
+  --diff-del: #DC322F;
+  --shadow-popup: 0 10px 30px rgba(88, 110, 117, 0.15);
+  --hover-bg: rgba(101, 123, 131, 0.08);
+  --row-solid: #E3DEC7;
+  --row-solid-hover: #EEE8D5;
+  --row-solid-gradient: #EEE8D5;
+}
+/* Nord */
+[data-theme="nord"] {
+  --bg-app: #242933;
+  --bg-sidebar: #2A303B;
+  --bg-titlebar: #2A303B;
+  --bg-surface: #2E3440;
+  --bg-input: #3B4252;
+  --bg-elevated: #434C5E;
+  --border: rgba(216, 222, 233, 0.10);
+  --border-soft: rgba(216, 222, 233, 0.06);
+  --text-main: #ECEFF4;
+  --text-muted: #D8DEE9;
+  --text-dim: #7B88A1;
+  --accent: #88C0D0;
+  --accent-hover: #76B2C4;
+  --diff-add: #A3BE8C;
+  --diff-del: #BF616A;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --hover-bg: rgba(216, 222, 233, 0.06);
+  --row-solid: #2A303B;
+  --row-solid-hover: #3B4252;
+  --row-solid-gradient: #3B4252;
+}
+/* Gruvbox Dark */
+[data-theme="gruvbox"] {
+  --bg-app: #1D2021;
+  --bg-sidebar: #242525;
+  --bg-titlebar: #242525;
+  --bg-surface: #282828;
+  --bg-input: #32302F;
+  --bg-elevated: #3C3836;
+  --border: rgba(235, 219, 178, 0.10);
+  --border-soft: rgba(235, 219, 178, 0.06);
+  --text-main: #EBDBB2;
+  --text-muted: #D5C4A1;
+  --text-dim: #928374;
+  --accent: #FABD2F;
+  --accent-hover: #E5A91F;
+  --diff-add: #B8BB26;
+  --diff-del: #FB4934;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(235, 219, 178, 0.07);
+  --row-solid: #242525;
+  --row-solid-hover: #32302F;
+  --row-solid-gradient: #32302F;
+}
+/* Catppuccin Mocha */
+[data-theme="catppuccin"] {
+  --bg-app: #11111B;
+  --bg-sidebar: #191926;
+  --bg-titlebar: #191926;
+  --bg-surface: #1E1E2E;
+  --bg-input: #27293D;
+  --bg-elevated: #313244;
+  --border: rgba(205, 214, 244, 0.10);
+  --border-soft: rgba(205, 214, 244, 0.06);
+  --text-main: #CDD6F4;
+  --text-muted: #A6ADC8;
+  --text-dim: #6C7086;
+  --accent: #89B4FA;
+  --accent-hover: #74A8F5;
+  --diff-add: #A6E3A1;
+  --diff-del: #F38BA8;
+  --shadow-popup: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --hover-bg: rgba(137, 180, 250, 0.09);
+  --row-solid: #191926;
+  --row-solid-hover: #27293D;
+  --row-solid-gradient: #27293D;
+}
+
+/* Sidebar drag-resizer (kept as plain CSS, it's a behavior strip) */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+.sidebar-resizer:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* Inspection panel drag-resizer — same strip, mirrored to the left edge */
+.panel-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+.panel-resizer:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* ---------- Aurora Borealis (prompt box) ----------
+   Flowing light curtains under the prompt: three colored blobs drift
+   sideways, each carrying two inner textures — leaning vertical "rays"
+   (::before) and boiling fractal noise (::after) — melted into one organic
+   aurora by the band's blur. Only transform/opacity are animated, so the
+   whole thing stays on the compositor. Palettes live in AuroraGlow.c.tsx. */
+.aurora-blob {
+  position: absolute;
+  /* The bright core of each curtain (the gradient focus) sits on the blob's
+     bottom edge — which must stay INSIDE the band, or overflow-hidden clips
+     the brightest light away. The band's own blur then smears the core a few
+     px past the band's edge, making it glow out from under the glass. */
+  top: -14%;
+  bottom: 0;
+  width: 62%;
+  border-radius: 9999px;
+  overflow: hidden;
+  will-change: transform;
+}
+.aurora-blob::before,
+.aurora-blob::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+/* Curtain rays — thin leaning light streaks sliding across the blob. The
+   repeating gradient has a 30px period, so a -60px drift loops seamlessly. */
+.aurora-blob::before {
+  top: -30%;
+  bottom: -30%;
+  left: -60%;
+  right: -60%;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 9px,
+    rgba(255, 255, 255, 0.14) 16px,
+    transparent 23px 30px
+  );
+}
+@keyframes aurora-rays {
+  from { transform: skewX(var(--skew, -10deg)) translateX(0); }
+  to   { transform: skewX(var(--skew, -10deg)) translateX(-60px); }
+}
+/* Boiling grain — a self-contained SVG fractal-noise tile (no external
+   asset) jumping between eight offsets: discrete steps read as the
+   shimmering texture of a real aurora. */
+.aurora-blob::after {
+  inset: -120px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  opacity: 0.3;
+  animation: aurora-grain 1.6s steps(1, end) infinite;
+}
+@keyframes aurora-grain {
+  0%     { transform: translate3d(0, 0, 0); }
+  12.5%  { transform: translate3d(-40px, -22px, 0); }
+  25%    { transform: translate3d(28px, -38px, 0); }
+  37.5%  { transform: translate3d(-18px, 30px, 0); }
+  50%    { transform: translate3d(42px, 16px, 0); }
+  62.5%  { transform: translate3d(-34px, -12px, 0); }
+  75%    { transform: translate3d(14px, 36px, 0); }
+  87.5%  { transform: translate3d(-46px, 8px, 0); }
+}
+.aurora-blob--a { left: -4%;  --skew: -9deg;  animation: aurora-a 13s ease-in-out infinite; }
+.aurora-blob--b { left: 20%;  --skew: -13deg; animation: aurora-b 17s ease-in-out infinite; }
+.aurora-blob--c { left: 44%;  --skew: -7deg;  animation: aurora-c 21s ease-in-out infinite; }
+/* Opposite ray drift per curtain gives the layers parallax depth. */
+.aurora-blob--a::before { animation: aurora-rays 11s linear infinite; }
+.aurora-blob--b::before { animation: aurora-rays 15s linear infinite reverse; }
+.aurora-blob--c::before { animation: aurora-rays 19s linear infinite; }
+@keyframes aurora-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(14%, 0, 0) scale(1.1, 0.92); }
+  66%      { transform: translate3d(-8%, 0, 0) scale(0.94, 1.06); }
+}
+@keyframes aurora-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  40%      { transform: translate3d(-16%, 0, 0) scale(1.14, 0.9); }
+  75%      { transform: translate3d(12%, 0, 0) scale(0.9, 1.08); }
+}
+@keyframes aurora-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.02); }
+  50%      { transform: translate3d(-20%, 0, 0) scale(1.18, 0.88); }
+}
+
+/* Glassmorphism container for the prompt: semi-transparent surface, heavy
+   backdrop blur and a hairline rim so the aurora reads through it. */
+.prompt-glass {
+  background: color-mix(in srgb, var(--bg-surface) 62%, transparent);
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-main) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent),
+    0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+/* The lip: one glass surface around the prompt box and the strip under it
+   (attach / mic, context / model / effort). The blur lives on the lip alone,
+   since a backdrop-filter nested in another one only sees its parent, not
+   the aurora. So the box inside is clear and reads exactly like the
+   "Latest" pill. The strip adds a faint tint, carried up into the corners
+   beside the box's rounded bottom so there are no gaps. No shadows. */
+.prompt-lip {
+  background: color-mix(in srgb, var(--bg-surface) 62%, transparent);
+  backdrop-filter: blur(18px) saturate(1.25);
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  border: 1px solid color-mix(in srgb, var(--text-main) 12%, transparent);
+}
+.prompt-lip > .prompt-glass {
+  margin: -1px -1px 0;
+  width: calc(100% + 2px);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent);
+}
+.prompt-lip-strip {
+  --lip-tint: color-mix(in srgb, var(--text-main) 4%, transparent);
+  position: relative;
+  background: var(--lip-tint);
+  border-radius: 0 0 17px 17px;
+}
+.prompt-lip-strip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -16px;
+  height: 16px;
+  background: var(--lip-tint);
+  pointer-events: none;
+  -webkit-mask:
+    radial-gradient(circle at 100% 0, transparent 15.5px, #000 16px) left / 16px 16px no-repeat,
+    radial-gradient(circle at 0 0, transparent 15.5px, #000 16px) right / 16px 16px no-repeat;
+  mask:
+    radial-gradient(circle at 100% 0, transparent 15.5px, #000 16px) left / 16px 16px no-repeat,
+    radial-gradient(circle at 0 0, transparent 15.5px, #000 16px) right / 16px 16px no-repeat;
+}
+
+/* ---------- Text selection policy ----------
+   Selection is OFF everywhere by default (desktop-app feel) and explicitly
+   re-enabled only where reading/copying text is the point: the chat thread,
+   the inspection panel ("chat sidebar"), the prompt textarea and any other
+   editable field. Chrome's UA sheet sets user-select:none on <button>, so the
+   override reaches inside buttons too — tool cards select like the prose
+   around them, with no holes mid-drag. */
+body { user-select: none; -webkit-user-select: none; }
+textarea, input, [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+.selectable, .selectable * { user-select: text !important; -webkit-user-select: text !important; }
+
+/* Diff syntax colors via tokens */
+.diff-line--add { background: color-mix(in srgb, var(--diff-add) 15%, transparent); }
+.diff-line--del { background: color-mix(in srgb, var(--diff-del) 15%, transparent); }
+
+/* Status badges (theme-aware) */
+.badge-add {
+  color: var(--diff-add);
+  background: color-mix(in srgb, var(--diff-add) 15%, transparent);
+  border-color: color-mix(in srgb, var(--diff-add) 35%, transparent);
+}
+.badge-del {
+  color: var(--diff-del);
+  background: color-mix(in srgb, var(--diff-del) 15%, transparent);
+  border-color: color-mix(in srgb, var(--diff-del) 35%, transparent);
+}
+.badge-run {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Window close button hover (native-like) */
+.win-close:hover { background: #E81123; color: #fff; }
+
+/* ---------- Themed range slider (Temperature dropdown) ----------
+   The native WebView2 slider is Windows-blue whatever the theme; this one
+   draws its track and thumb from the theme tokens. --fill = filled share. */
+.range-theme {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--fill, 50%),
+    var(--bg-elevated) var(--fill, 50%),
+    var(--bg-elevated) 100%
+  );
+}
+.range-theme::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease;
+}
+.range-theme:hover::-webkit-slider-thumb,
+.range-theme:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.15);
+}

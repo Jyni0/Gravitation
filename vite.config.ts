@@ -1,0 +1,30 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
+
+// The UI shows the same version the manifests declare — no second copy to drift.
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  define: {
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(pkg.version),
+  },
+  // Tauri expects a fixed dev port
+  server: {
+    port: 1430,
+    strictPort: true,
+    // Cargo writes/locks thousands of files under src-tauri/target; watching them
+    // crashes Vite on Windows with EBUSY. Rust changes are handled by the Tauri CLI.
+    watch: {
+      ignored: ["**/src-tauri/**"],
+    },
+  },
+  build: {
+    target: "es2022",
+    outDir: "dist",
+  },
+  clearScreen: false,
+  envPrefix: ["VITE_", "TAURI_"],
+});
