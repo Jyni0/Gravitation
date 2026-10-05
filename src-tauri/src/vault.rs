@@ -152,6 +152,12 @@ pub fn decrypt(stored: &str) -> String {
     decrypt_with(&load_master(), stored).unwrap_or_default()
 }
 
+/// Decrypts a vault value; None when it does not open (unlike `decrypt`,
+/// a failure is not mistaken for an empty secret).
+pub fn try_decrypt(stored: &str) -> Option<String> {
+    decrypt_with(&load_master(), stored)
+}
+
 /// Decrypts a vault value with a given master key (None = it does not open).
 pub fn decrypt_with(master: &[u8; 32], stored: &str) -> Option<String> {
     let Some(b64) = stored.strip_prefix(MARKER) else {

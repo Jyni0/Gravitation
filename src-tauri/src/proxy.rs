@@ -300,12 +300,16 @@ pub async fn ssh_list_proxies(app: AppHandle) -> Result<Vec<SshProxy>, String> {
 
 #[tauri::command]
 pub async fn ssh_save_proxy(app: AppHandle, proxy: SshProxy) -> Result<String, String> {
-    save(&app, &proxy).await
+    let r = save(&app, &proxy).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]
 pub async fn ssh_delete_proxy(app: AppHandle, proxy_id: String) -> Result<(), String> {
-    delete(&app, &proxy_id).await
+    let r = delete(&app, &proxy_id).await;
+    crate::sync::nudge();
+    r
 }
 
 #[cfg(test)]

@@ -1,0 +1,32 @@
+[package]
+name = "gravitation-sync"
+version = "0.1.0"
+description = "Gravitation sync server — stores end-to-end encrypted blobs, never sees your data"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "gravitation-sync"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+# ring, not aws-lc: builds with a plain C compiler, no cmake/NASM.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Bundled SQLite: one self-contained binary, nothing to apt install.
+rusqlite = { version = "0.32", features = ["bundled"] }
+ed25519-dalek = "3.0.0"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+clap = { version = "4", features = ["derive", "env"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

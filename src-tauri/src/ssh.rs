@@ -322,6 +322,14 @@ pub fn unique_id(prefix: &str) -> String {
 /// Loads one saved server row and decrypts its secrets (plaintext stays
 /// inside Rust). `key_id` credentials are resolved from ssh_keys here too.
 async fn load_server(app: &AppHandle, id: &str) -> Result<SshServer, String> {
+    // With sync on, nothing secret opens until the server confirms this device.
+    crate::sync::ensure_access(app).await?;
+    load_server_unchecked(app, id).await
+}
+
+/// `load_server` without the sync gate — only for closing what is already
+/// open (disconnect logs the server it closes, also while locked).
+async fn load_server_unchecked(app: &AppHandle, id: &str) -> Result<SshServer, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let row = sqlx::query(
         "SELECT id, name, host, port, username, auth, password, private_key, key_id, host_key, os, proxy_id FROM ssh_servers WHERE id = $1",
@@ -739,7 +747,7 @@ pub async fn disconnect(app: &AppHandle, actor: &str, server_id: &str) -> Result
         return Ok(());
     };
     drop_sftp(server_id);
-    let server = load_server(app, server_id).await?;
+    let server = load_server_unchecked(app, server_id).await?;
     let res = conn
         .handle
         .disconnect(Disconnect::ByApplication, "", "en")
@@ -1600,6 +1608,7 @@ pub async fn list_keys(app: &AppHandle) -> Result<Vec<SshKey>, String> {
 /// when the edit form opens, so the private key/passphrase are visible to
 /// the user looking at this exact credential (and nowhere else).
 pub async fn get_key(app: &AppHandle, id: &str) -> Result<SshKey, String> {
+    crate::sync::ensure_access(app).await?;
     let pool = sql(app).await.ok_or("database unavailable")?;
     let row = sqlx::query(
         "SELECT id, name, private_key, passphrase, public_key, fingerprint, comment, group_name FROM ssh_keys WHERE id = $1",
@@ -1894,7 +1903,9 @@ pub async fn ssh_list_servers(app: AppHandle) -> Result<Vec<SshServer>, String> 
 
 #[tauri::command]
 pub async fn ssh_save_server(app: AppHandle, server: SshServer) -> Result<String, String> {
-    save_server(&app, &server).await
+    let r = save_server(&app, &server).await;
+    crate::sync::nudge();
+    r
 }
 
 /// Decrypts a server's stored password for the edit form's "show" button.
@@ -1922,7 +1933,9 @@ pub async fn ssh_reorder_units(app: AppHandle, kind: String, ids: Vec<String>) -
             .await
             .map_err(|e| format!("db error: {e}"))?;
     }
-    tx.commit().await.map_err(|e| format!("db error: {e}"))
+    tx.commit().await.map_err(|e| format!("db error: {e}"))?;
+    crate::sync::nudge();
+    Ok(())
 }
 
 /// Table of a unit kind ("server" | "key" | "script" | "proxy").
@@ -1946,12 +1959,15 @@ pub async fn ssh_ungroup_units(app: AppHandle, kind: String, group: String) -> R
         .execute(&pool)
         .await
         .map_err(|e| format!("db error: {e}"))?;
+    crate::sync::nudge();
     Ok(())
 }
 
 #[tauri::command]
 pub async fn ssh_delete_server(app: AppHandle, server_id: String) -> Result<(), String> {
-    delete_server(&app, &server_id).await
+    let r = delete_server(&app, &server_id).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]
@@ -1961,12 +1977,16 @@ pub async fn ssh_list_keys(app: AppHandle) -> Result<Vec<SshKey>, String> {
 
 #[tauri::command]
 pub async fn ssh_save_key(app: AppHandle, key: SshKey) -> Result<String, String> {
-    save_key(&app, &key).await
+    let r = save_key(&app, &key).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]
 pub async fn ssh_delete_key(app: AppHandle, key_id: String) -> Result<(), String> {
-    delete_key(&app, &key_id).await
+    let r = delete_key(&app, &key_id).await;
+    crate::sync::nudge();
+    r
 }
 
 /// Full credential WITH decrypted secrets — only for the edit form opening
@@ -1996,7 +2016,9 @@ pub async fn ssh_generate_key(
     algorithm: String,
     passphrase: String,
 ) -> Result<SshKey, String> {
-    generate_key(&app, &name, &algorithm, &passphrase).await
+    let r = generate_key(&app, &name, &algorithm, &passphrase).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]
@@ -2006,12 +2028,16 @@ pub async fn ssh_list_scripts(app: AppHandle) -> Result<Vec<SshScript>, String> 
 
 #[tauri::command]
 pub async fn ssh_save_script(app: AppHandle, script: SshScript) -> Result<String, String> {
-    save_script(&app, &script).await
+    let r = save_script(&app, &script).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]
 pub async fn ssh_delete_script(app: AppHandle, script_id: String) -> Result<(), String> {
-    delete_script(&app, &script_id).await
+    let r = delete_script(&app, &script_id).await;
+    crate::sync::nudge();
+    r
 }
 
 #[tauri::command]

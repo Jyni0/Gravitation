@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { Info, Palette, ScrollText, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { Cloud, Info, Palette, ScrollText, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import type { Theme } from "../core/types.i";
 import { APP_VERSION, THEME_LIST } from "../core/types.i";
 import { TerminalSettings } from "./TerminalSettings.c";
 import { LogsSettings } from "./LogsSettings.c";
+import { SyncSettings } from "./SyncSettings.c";
+import { UpdateRow } from "./UpdateRow.c";
 import { Combobox, ScrollArea, SettingRow, SettingsCard, Sep, IconButton, NavItem as SideItem } from "../components";
 
-export type SettingsSection = "appearance" | "terminal" | "logs" | "about";
+export type SettingsSection = "appearance" | "sync" | "terminal" | "logs" | "about";
 
 export function SettingsModal({
   theme,
@@ -34,7 +36,12 @@ export function SettingsModal({
   type NavItem = { id: SettingsSection; label: string; icon: LucideIcon };
   type NavGroup = { group?: string; items: NavItem[] };
   const navItems: NavGroup[] = [
-    { items: [{ id: "appearance", label: "Appearance", icon: Palette }] },
+    {
+      items: [
+        { id: "appearance", label: "Appearance", icon: Palette },
+        { id: "sync", label: "Sync", icon: Cloud },
+      ],
+    },
     {
       group: "SSH",
       items: [
@@ -62,6 +69,7 @@ export function SettingsModal({
 
   const titles: Record<SettingsSection, [string, string]> = {
     appearance: ["Appearance", "Color theme of the application"],
+    sync: ["Sync", "Keep units the same on every device through your own server"],
     terminal: ["Terminal", "Theme and behaviour of the SSH console"],
     logs: ["Logs", "The SSH audit trail of connections and commands"],
     about: ["About", "Application information"],
@@ -132,6 +140,8 @@ export function SettingsModal({
               </SettingsCard>
             )}
 
+            {section === "sync" && <SyncSettings />}
+
             {section === "terminal" && <TerminalSettings />}
 
             {section === "logs" && <LogsSettings />}
@@ -141,6 +151,8 @@ export function SettingsModal({
                 <SettingRow title="Application" hint="Gravitation — SSH client">
                   <span className="font-mono text-[13px] text-[var(--text-main)]">v{APP_VERSION}</span>
                 </SettingRow>
+                <Sep />
+                <UpdateRow />
                 <Sep />
                 <SettingRow title="Storage" hint={persistent ? "SQLite (desktop shell)" : "In-memory (browser preview)"} />
               </SettingsCard>

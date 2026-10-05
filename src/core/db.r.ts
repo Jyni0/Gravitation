@@ -697,3 +697,83 @@ export async function importFromSingularity(): Promise<number> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<number>("ssh_import_singularity");
 }
+
+/* ---------- Sync (optional, self-hosted, end-to-end encrypted) ---------- */
+
+/** Live sync state of this device (`sync://status`). */
+export interface SyncStatus {
+  enabled: boolean;
+  url: string;
+  state: "off" | "idle" | "syncing" | "error";
+  /** Unix seconds of the last good sync, 0 = never. */
+  last_ok: number;
+  error: string;
+  items: number;
+  /** Why sync is off, when it was turned off for this device (keys reset elsewhere). */
+  notice: string;
+  /** Sync is on but the server has not confirmed this device yet: servers, passwords and keys stay closed. */
+  locked: boolean;
+}
+
+const SYNC_OFF: SyncStatus = { enabled: false, url: "", state: "off", last_ok: 0, error: "", items: 0, notice: "", locked: false };
+
+export async function syncStatus(): Promise<SyncStatus> {
+  if (!inTauri) return SYNC_OFF;
+  return sshInvoke<SyncStatus>("sync_status");
+}
+
+/** First device: creates the account (server URL + invite from `gravitation-sync invite`). */
+export async function syncCreate(url: string, invite: string, passphrase: string): Promise<void> {
+  return sshInvoke("sync_create", { url, invite, passphrase });
+}
+
+/** Another device: setup code from a connected device + the passphrase. */
+export async function syncJoin(code: string, passphrase: string): Promise<void> {
+  return sshInvoke("sync_join", { code, passphrase });
+}
+
+/** Opens a locked device offline with the passphrase (until the app restarts). */
+export async function syncUnlock(passphrase: string): Promise<void> {
+  return sshInvoke("sync_unlock", { passphrase });
+}
+
+export async function syncNow(): Promise<void> {
+  return sshInvoke("sync_now");
+}
+
+/** Something synced changed outside Rust's own commands — sync soon. */
+export async function syncNudge(): Promise<void> {
+  if (!inTauri) return;
+  return sshInvoke("sync_nudge");
+}
+
+/**
+ * New passphrase + new secret key. The server keeps everything (re-encrypted);
+ * every other device is signed out and removes its synced units. Returns the new setup code.
+ */
+export async function syncResetKeys(current: string, passphrase: string): Promise<string> {
+  return sshInvoke<string>("sync_reset_keys", { current, passphrase });
+}
+
+export async function syncSetupCode(): Promise<string> {
+  return sshInvoke<string>("sync_setup_code");
+}
+
+/** Turns sync off here (local units stay); `wipeServer` also deletes the account on the server. */
+export async function syncDisconnect(wipeServer: boolean): Promise<void> {
+  return sshInvoke("sync_disconnect", { wipeServer });
+}
+
+/** onStatus — sync state changed; onApplied — units arrived from another device. */
+export async function onSyncEvent(handlers: {
+  onStatus?: (s: SyncStatus) => void;
+  onApplied?: () => void;
+}): Promise<() => void> {
+  if (!inTauri) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  const offs = await Promise.all([
+    listen<SyncStatus>("sync://status", (e) => handlers.onStatus?.(e.payload)),
+    listen("sync://applied", () => handlers.onApplied?.()),
+  ]);
+  return () => offs.forEach((off) => off());
+}

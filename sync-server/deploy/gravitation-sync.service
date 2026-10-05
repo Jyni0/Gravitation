@@ -1,0 +1,43 @@
+[Unit]
+Description=Gravitation sync server (end-to-end encrypted)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gravitation-sync
+Group=gravitation-sync
+EnvironmentFile=-/etc/gravitation-sync.env
+ExecStart=/usr/local/bin/gravitation-sync --data /var/lib/gravitation-sync serve
+Restart=on-failure
+RestartSec=3
+
+# Sandbox: the server needs its data dir and the network, nothing else.
+StateDirectory=gravitation-sync
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -16,6 +16,8 @@ import {
 import type { SshConn, SshKey, SshScript, SshServer, UnitsTab, ViewKind } from "../core/types.i";
 import { leaves, type ConnGroup } from "./splitLayout.u";
 import { UnitGroups } from "./UnitGroups.c";
+import { useUpdates } from "../core/updates.u";
+import type { SettingsSection } from "../settings/SettingsModal.c";
 import { useDragOrder } from "../hooks/useDragOrder.h";
 import { ROW_ICON, ScrollArea, OsLogo, NavItem, RowActions } from "../components";
 
@@ -86,7 +88,7 @@ export function SshSidebar({
   onPasteScript: ((script: SshScript) => void) | null;
   onShowView: (v: "units" | "ssh-logs") => void;
   onAdd: (tab: UnitsTab) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: SettingsSection) => void;
   /** Units changed from the sidebar (a group was deleted) — reload them. */
   onUnitsChanged: () => void;
   /** A Connections row is being dragged (pointer in viewport px)… */
@@ -94,6 +96,7 @@ export function SshSidebar({
   /** …and was let go there — over a pane it lands in the split view. */
   onDropConn: (connId: string, x: number, y: number) => void;
 }) {
+  const update = useUpdates();
   const [hovered, setHovered] = useState<string | null>(null);
   /* Section collapse state — the same pattern as Projects in the agent sidebar. */
   const [open, setOpen] = useState<Record<string, boolean>>({
@@ -396,8 +399,21 @@ export function SshSidebar({
 
       {/* Footer: Settings, like the Agent sidebar */}
       <div className="mt-auto shrink-0 px-2.5 pb-3 pt-1">
-        <NavItem icon={<Settings size={16} strokeWidth={1.5} className="shrink-0" />} onClick={onOpenSettings}>
+        <NavItem icon={<Settings size={16} strokeWidth={1.5} className="shrink-0" />} onClick={() => onOpenSettings()}>
           <span>Settings</span>
+          {update.phase === "available" && (
+            <span
+              role="button"
+              className="ml-auto rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-[11px] font-medium text-[var(--accent)] hover:bg-[var(--accent)]/25"
+              title={`Version ${update.version} is available`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSettings("about");
+              }}
+            >
+              Update
+            </span>
+          )}
         </NavItem>
       </div>
 

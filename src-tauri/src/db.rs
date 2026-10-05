@@ -109,6 +109,23 @@ pub fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "sync state",
+            // What was last synced per item (see sync.rs): content hash,
+            // item version and server revision. Empty while sync is off.
+            sql: "
+                CREATE TABLE IF NOT EXISTS sync_items (
+                  item     TEXT PRIMARY KEY,
+                  kind     TEXT NOT NULL DEFAULT '',
+                  unit_id  TEXT NOT NULL DEFAULT '',
+                  hash     TEXT NOT NULL DEFAULT '',
+                  v        INTEGER NOT NULL DEFAULT 0,
+                  rev      INTEGER NOT NULL DEFAULT 0
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

@@ -4,6 +4,7 @@ mod import;
 mod proxy;
 mod safety;
 mod ssh;
+mod sync;
 mod vault;
 
 use tauri::Manager;
@@ -23,6 +24,17 @@ fn terminal_focus(focused: bool) {
 #[tauri::command]
 async fn ssh_connect(app: tauri::AppHandle, server_id: String) -> Result<(), String> {
     ssh::connect(&app, "user", &server_id).await
+}
+
+/// Opens this app's GitHub release page in the default browser (the update
+/// notice links there — nothing is downloaded or installed by the app).
+#[tauri::command]
+fn open_release_page(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !url.starts_with("https://github.com/Jyni0/Gravitation/") {
+        return Err("not a Gravitation release link".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Server ids with a live connection — the Units grid paints status from it.
@@ -73,10 +85,12 @@ pub fn run() {
                 Ok(p) => println!("[gravitation] database: {p}"),
                 Err(e) => eprintln!("[gravitation] database path unavailable: {e}"),
             }
+            sync::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             terminal_focus,
+            open_release_page,
             ssh_connect,
             ssh_connected,
             proxy::ssh_list_proxies,
@@ -115,6 +129,15 @@ pub fn run() {
             ssh::ssh_sftp_mkdir,
             ssh::ssh_vault_status,
             import::ssh_import_singularity,
+            sync::sync_status,
+            sync::sync_create,
+            sync::sync_join,
+            sync::sync_now,
+            sync::sync_nudge,
+            sync::sync_setup_code,
+            sync::sync_disconnect,
+            sync::sync_reset_keys,
+            sync::sync_unlock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running gravitation");

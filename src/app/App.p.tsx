@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { AnimatePresence } from "motion/react";
+import { Lock } from "lucide-react";
 import * as db from "../core/db.r";
 import type { SshConn, SshKey, SshProxy, SshScript, SshServer, Theme, UnitsTab, ViewKind } from "../core/types.i";
 import { THEMES } from "../core/types.i";
@@ -14,7 +15,9 @@ import { dropConn, leaf, leaves, paneDrag, dropTarget, removeConn, setRatio } fr
 import type { ConnGroup, DropZone, NodePath } from "../layout/splitLayout.u";
 import { SshPanel } from "../layout/SshPanel.c";
 import type { SshPanelTarget } from "../layout/SshPanel.c";
-import { SettingsModal } from "../settings/SettingsModal.c";
+import { SettingsModal, type SettingsSection } from "../settings/SettingsModal.c";
+import { startUpdateChecks } from "../core/updates.u";
+import { reloadUnitGroups } from "../core/unitGroups.u";
 import { ScrollArea, cx } from "../components";
 
 /** Right-hand panel width bounds, px. */
@@ -50,6 +53,13 @@ export default function App() {
     void db.setSetting("theme", t);
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Sync on but this device not confirmed yet — units are closed (sync.rs). */
+  const [syncLocked, setSyncLocked] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
+  const openSettings = useCallback((section?: SettingsSection) => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
   /** False until the first DB read finishes. */
   const [persistent, setPersistent] = useState(false);
   const [view, setView] = useState<ViewKind>("units");
@@ -151,6 +161,7 @@ export default function App() {
 
   // Load units once, then track live status/log events pushed by Rust.
   useEffect(() => {
+    startUpdateChecks();
     reloadSshServers();
     let off: (() => void) | undefined;
     void db
@@ -164,7 +175,24 @@ export default function App() {
       .then((fn) => {
         off = fn;
       });
-    return () => off?.();
+    void db.syncStatus().then((st) => setSyncLocked(st.locked)).catch(() => {});
+    // Units that arrived from another device through sync.
+    let offSync: (() => void) | undefined;
+    void db
+      .onSyncEvent({
+        onStatus: (st) => setSyncLocked(st.locked),
+        onApplied: () => {
+          reloadSshServers();
+          reloadUnitGroups();
+        },
+      })
+      .then((fn) => {
+        offSync = fn;
+      });
+    return () => {
+      off?.();
+      offSync?.();
+    };
   }, [reloadSshServers]);
 
   // Mirrors of the connection state for the handlers below: state updaters
@@ -492,7 +520,7 @@ export default function App() {
     <div className="flex h-full flex-col">
       <TitleBar
         onNewServer={() => addUnit("servers")}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openSettings}
         onToggleSidebar={toggleSidebar}
         sidebarHidden={sidebarHidden}
       />
@@ -527,7 +555,7 @@ export default function App() {
             onDropConn={dropConnRow}
             onShowView={setView}
             onAdd={addUnit}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={openSettings}
             onUnitsChanged={reloadSshServers}
           />
         )}
@@ -617,12 +645,24 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {syncLocked && (
+          <button
+            className="fixed bottom-4 left-1/2 z-[300] flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-500/40 bg-[var(--bg-surface)] px-3.5 py-1.5 text-[12px] text-[var(--text-main)] shadow-lg hover:bg-[var(--hover-bg)]"
+            onClick={() => openSettings("sync")}
+          >
+            <Lock size={12} className="text-amber-500" />
+            Servers locked until the sync server confirms this device
+            <span className="text-[var(--accent)]">Unlock</span>
+          </button>
+        )}
+
         <AnimatePresence>
           {settingsOpen && (
             <SettingsModal
               theme={theme}
               onTheme={setTheme}
               persistent={persistent}
+              initialSection={settingsSection}
               onClose={() => setSettingsOpen(false)}
             />
           )}

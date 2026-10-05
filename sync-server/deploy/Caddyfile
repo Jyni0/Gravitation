@@ -1,0 +1,9 @@
+# /etc/caddy/Caddyfile — HTTPS with an automatic Let's Encrypt certificate.
+# Point the domain's DNS A/AAAA record at this server, open ports 80 and 443.
+sync.example.com {
+	reverse_proxy 127.0.0.1:8443
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}

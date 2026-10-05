@@ -24,9 +24,14 @@ let loaded = false;
 const subscribers = new Set<() => void>();
 
 function publish(next: GroupState) {
+  const orderChanged = next.order !== state.order;
   state = next;
   subscribers.forEach((f) => f());
-  void db.setSetting(SETTING, JSON.stringify(next)).catch(() => {});
+  void db
+    .setSetting(SETTING, JSON.stringify(next))
+    // The order is synced between devices (collapsing is not).
+    .then(() => (orderChanged ? db.syncNudge() : undefined))
+    .catch(() => {});
 }
 
 function load() {
@@ -41,6 +46,12 @@ function load() {
       subscribers.forEach((f) => f());
     })
     .catch(() => {});
+}
+
+/** Re-reads the setting — sync just wrote another device's group order. */
+export function reloadUnitGroups() {
+  loaded = false;
+  load();
 }
 
 const subscribe = (f: () => void) => {
