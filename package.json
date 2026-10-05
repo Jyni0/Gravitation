@@ -1,7 +1,7 @@
 {
   "name": "gravitation",
   "private": true,
-  "version": "0.1.0",
+  "version": "5.8.0",
   "description": "Gravitation — SSH client: terminals, SFTP, keys, scripts and proxies",
   "type": "module",
   "scripts": {
