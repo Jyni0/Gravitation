@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "icons": "tauri icon app-icon.png && python scripts/generate_icons.py"
+    "icons": "tauri icon app-icon.png && python scripts/generate_icons.py",
+    "build:sync-server": "powershell -ExecutionPolicy Bypass -File sync-server/build.ps1"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

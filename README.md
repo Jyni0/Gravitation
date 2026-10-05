@@ -30,7 +30,7 @@ npm run tauri:build   # .msi/.exe для Windows
 ```
 src/            # React UI (дизайн-система в src/styles.css, компоненты в src/components)
 src-tauri/      # Rust: ssh.rs (соединения, PTY, SFTP), proxy.rs, vault.rs, import.rs, sync.rs
-sync-server/    # отдельный сервер синхронизации (свой Cargo-проект, бинарник для Debian/Ubuntu)
+sync-server/    # отдельный сервер синхронизации: npm run build:sync-server → один Linux-файл, на сервере sudo ./gravitation-sync install
 ```
 
 ## Релиз

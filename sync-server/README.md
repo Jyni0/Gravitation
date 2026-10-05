@@ -50,66 +50,77 @@ local.
 > Keep the passphrase. It cannot be reset: if every device forgets it, the
 > data on the server cannot be read by anyone.
 
-## Install on Debian / Ubuntu
+## Install
 
-### 1. Build the binary
+### 1. Build on Windows
 
-Build it on the server:
+Run this in the Gravitation folder:
 
-```sh
-sudo apt install -y build-essential curl
-curl https://sh.rustup.rs -sSf | sh -s -- -y && . ~/.cargo/env
-cd sync-server
-cargo build --release      # → target/release/gravitation-sync
+```powershell
+npm run build:sync-server
 ```
 
-For a static binary that you can copy to any x86-64 Linux:
+The result is `sync-server/dist/gravitation-sync`, one static Linux file that
+runs on any x86-64 Debian or Ubuntu. Add `-- -Arm` to the command for an ARM64
+server.
+
+The first run sets up what the cross-build needs: the Rust musl target, Zig
+(installed with `pip`) and `cargo-zigbuild`. Building on the server is not
+needed.
+
+### 2. Tailscale on the server (once)
 
 ```sh
-sudo apt install -y musl-tools && rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
 ```
 
-### 2. Install the service
+Install Tailscale on your computers as well, signed in to the same account.
+
+### 3. Copy and install
+
+Copy the file to the server (from Windows):
+
+```powershell
+scp sync-server\dist\gravitation-sync user@server:~/
+```
+
+Then install it (on the server):
 
 ```sh
-sudo sh deploy/install.sh ./gravitation-sync
+chmod +x gravitation-sync && sudo ./gravitation-sync install
 ```
 
-This installs the binary to `/usr/local/bin`, creates the `gravitation-sync`
-system user, sets up `/var/lib/gravitation-sync` and enables the systemd unit.
-By default the service listens on `127.0.0.1:8443`. Settings are in
-`/etc/gravitation-sync.env`.
+`install` does the following:
 
-### 3. HTTPS
+- puts the binary in `/usr/local/bin`;
+- creates the unprivileged `gravitation-sync` user;
+- writes a sandboxed systemd service;
+- listens on the server's **Tailscale IP** (`100.x.y.z:8443`), so the server is
+  not reachable from the internet at all;
+- starts the service and prints the address and a first invite code.
 
-Pick one of two options.
+To listen on another address, use
+`sudo ./gravitation-sync install --listen 0.0.0.0:8443`.
 
-**Caddy (recommended).** Caddy gets and renews a Let's Encrypt certificate
-automatically.
+**Update:** build again, copy the new file and run `sudo ./gravitation-sync install`
+again. Settings and data are kept.
 
-```sh
-sudo apt install -y caddy
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # put your domain in it
-sudo systemctl reload caddy
-```
-
-**Built-in TLS.** Set `GSYNC_LISTEN=0.0.0.0:8443`, `GSYNC_TLS_CERT` and
-`GSYNC_TLS_KEY` in `/etc/gravitation-sync.env`, then run
-`sudo systemctl restart gravitation-sync`.
+**Remove:** run `sudo gravitation-sync uninstall`. The data in
+`/var/lib/gravitation-sync` stays.
 
 ### 4. Connect the first device
 
-```sh
-sudo -u gravitation-sync gravitation-sync --data /var/lib/gravitation-sync invite
-```
+In Gravitation, go to **Settings → Sync → First device — create account** and
+enter:
 
-In Gravitation, go to **Settings → Sync → First device — create account**
-and enter:
-
-- the server address (`https://sync.example.com`);
+- the address `install` printed (`http://100.x.y.z:8443`);
 - the invite code;
 - a passphrase.
+
+Use the IP, not the Tailscale host name. Plain http is fine here: the app
+allows it for Tailscale and private addresses, and Tailscale encrypts the
+traffic anyway.
 
 ### 5. Add other devices
 
@@ -118,8 +129,11 @@ and enter:
 2. On the new device, open **Join with setup code**, paste the code and enter
    the passphrase.
 
-No invite is needed for this. Treat the setup code like a key: it is half of
-the secret.
+### Public server instead of Tailscale
+
+1. Install with `--listen 127.0.0.1:8443`.
+2. Put Caddy in front of it for HTTPS: see `deploy/Caddyfile`.
+3. Add `GSYNC_TRUST_PROXY=true` to `/etc/gravitation-sync.env`.
 
 ## Lost device or leaked passphrase
 
@@ -150,15 +164,15 @@ sure it can get nothing new and cannot touch the server.
 
 ## Admin commands
 
-```sh
-gravitation-sync --data /var/lib/gravitation-sync invite [--hours 24]   # one-time invite code
-gravitation-sync --data /var/lib/gravitation-sync accounts              # list accounts
-gravitation-sync --data /var/lib/gravitation-sync revoke <id-prefix>    # sign all devices out
-gravitation-sync --data /var/lib/gravitation-sync delete-account <id-prefix>
-```
+Run these on the server. With `sudo` they run as the service user.
 
-Run them as the `gravitation-sync` user (`sudo -u gravitation-sync …`) so that
-the database keeps its owner.
+```sh
+sudo gravitation-sync invite [--hours 24]        # one-time invite code
+sudo gravitation-sync accounts                   # list accounts
+sudo gravitation-sync revoke <id-prefix>         # sign all devices out
+sudo gravitation-sync delete-account <id-prefix>
+journalctl -u gravitation-sync -f                # logs
+```
 
 **Backup:** copy `/var/lib/gravitation-sync/sync.db`. It contains ciphertext
 only.

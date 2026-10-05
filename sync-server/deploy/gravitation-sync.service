@@ -1,6 +1,7 @@
 [Unit]
 Description=Gravitation sync server (end-to-end encrypted)
-After=network-online.target
+# tailscaled: when listening on the Tailscale IP, start after it is up.
+After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]

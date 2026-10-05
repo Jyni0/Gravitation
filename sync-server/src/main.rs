@@ -12,8 +12,12 @@
 //!   accounts        list accounts
 //!   delete-account  remove an account and all its data
 //!   revoke          sign every device of an account out
+//!   install         set up / update the systemd service (Linux, sudo)
+//!   uninstall       remove the service (data stays)
 
 mod api;
+#[cfg(unix)]
+mod install;
 mod limit;
 mod store;
 
@@ -70,6 +74,15 @@ enum Cmd {
         /// Account id (or a unique prefix of it).
         id: String,
     },
+    /// Install or update the service: `sudo ./gravitation-sync install`.
+    /// Listens on the Tailscale IP by default.
+    Install {
+        /// Address to listen on instead of <tailscale-ip>:8443.
+        #[arg(long)]
+        listen: Option<String>,
+    },
+    /// Remove the service (the data in /var/lib/gravitation-sync stays).
+    Uninstall,
 }
 
 fn main() {
@@ -81,6 +94,23 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
+    match &cli.cmd {
+        #[cfg(unix)]
+        Cmd::Install { listen } => return install::install(listen.clone()),
+        #[cfg(unix)]
+        Cmd::Uninstall => return install::uninstall(),
+        #[cfg(not(unix))]
+        Cmd::Install { .. } | Cmd::Uninstall => return Err("install works on Linux".into()),
+        Cmd::Serve { .. } => {}
+        // `sudo gravitation-sync invite` just works: admin commands run as
+        // the service user, so the database keeps its owner.
+        #[cfg(unix)]
+        _ if install::is_root() && install::service_user_exists() => {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            return install::rerun_as_service_user(&args);
+        }
+        _ => {}
+    }
     let store = store::Store::open(&cli.data)?;
     match cli.cmd {
         Cmd::Serve { listen, tls_cert, tls_key, trust_proxy } => {
@@ -110,6 +140,7 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             Ok(())
         }
+        Cmd::Install { .. } | Cmd::Uninstall => unreachable!(),
         Cmd::DeleteAccount { id } => {
             let id = store.resolve_account(&id)?;
             store.delete_account(&id)?;
