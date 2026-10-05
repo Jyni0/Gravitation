@@ -528,6 +528,7 @@ export default function App() {
             onShowView={setView}
             onAdd={addUnit}
             onOpenSettings={() => setSettingsOpen(true)}
+            onUnitsChanged={reloadSshServers}
           />
         )}
 

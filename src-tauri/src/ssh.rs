@@ -82,6 +82,9 @@ pub struct SshServer {
     /// Id of a saved proxy (ssh_proxies) to tunnel through; "" = direct.
     #[serde(default)]
     pub proxy_id: String,
+    /// Group the unit is filed under ("" = none).
+    #[serde(default)]
+    pub group: String,
 }
 
 /// A standalone private-key credential, reusable by several servers.
@@ -110,6 +113,9 @@ pub struct SshKey {
     /// private body never leaves Rust.
     #[serde(default)]
     pub public_key: String,
+    /// Group the unit is filed under ("" = none).
+    #[serde(default)]
+    pub group: String,
 }
 
 /// Marker comment baked into every key this app generates.
@@ -126,6 +132,9 @@ pub struct SshScript {
     pub description: String,
     #[serde(default)]
     pub content: String,
+    /// Group the unit is filed under ("" = none).
+    #[serde(default)]
+    pub group: String,
 }
 
 fn default_port() -> u16 {
@@ -345,6 +354,7 @@ async fn load_server(app: &AppHandle, id: &str) -> Result<SshServer, String> {
         os: row.try_get("os").unwrap_or_default(),
         key_passphrase: String::new(),
         proxy_id: row.try_get("proxy_id").unwrap_or_default(),
+        group: String::new(),
     };
     // Lazy migration of legacy inline keys (auth == "key" stored the body on
     // the server row): move it into a Credentials row and link it, so old
@@ -414,6 +424,7 @@ async fn load_key(app: &AppHandle, id: &str) -> Result<SshKey, String> {
         fingerprint: String::new(),
         comment: row.try_get("comment").unwrap_or_default(),
         public_key: String::new(),
+        group: String::new(),
     })
 }
 
@@ -1405,7 +1416,7 @@ pub async fn sftp_write_chunk(
 pub async fn list_servers(app: &AppHandle) -> Result<Vec<SshServer>, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let rows = sqlx::query(
-        "SELECT id, name, host, port, username, auth, key_id, host_key, os, password, proxy_id FROM ssh_servers ORDER BY sort_order ASC, created_at DESC",
+        "SELECT id, name, host, port, username, auth, key_id, host_key, os, password, proxy_id, group_name FROM ssh_servers ORDER BY sort_order ASC, created_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -1429,6 +1440,7 @@ pub async fn list_servers(app: &AppHandle) -> Result<Vec<SshServer>, String> {
             os: r.try_get("os").unwrap_or_default(),
             key_passphrase: String::new(),
             proxy_id: r.try_get("proxy_id").unwrap_or_default(),
+            group: r.try_get("group_name").unwrap_or_default(),
         })
         .collect())
 }
@@ -1487,7 +1499,7 @@ pub async fn save_server(app: &AppHandle, s: &SshServer) -> Result<String, Strin
         s.host_key.clone()
     };
     sqlx::query(
-        "INSERT INTO ssh_servers (id, name, host, port, username, auth, password, private_key, key_id, host_key, proxy_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET name=$2, host=$3, port=$4, username=$5, auth=$6, password=$7, private_key=$8, key_id=$9, host_key=$10, proxy_id=$11",
+        "INSERT INTO ssh_servers (id, name, host, port, username, auth, password, private_key, key_id, host_key, proxy_id, group_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO UPDATE SET name=$2, host=$3, port=$4, username=$5, auth=$6, password=$7, private_key=$8, key_id=$9, host_key=$10, proxy_id=$11, group_name=$12",
     )
     .bind(&id)
     .bind(&s.name)
@@ -1500,6 +1512,7 @@ pub async fn save_server(app: &AppHandle, s: &SshServer) -> Result<String, Strin
     .bind(&s.key_id)
     .bind(&host_key)
     .bind(&s.proxy_id)
+    .bind(s.group.trim())
     .execute(&pool)
     .await
     .map_err(|e| format!("cannot save server: {e}"))?;
@@ -1541,7 +1554,7 @@ fn derive_public(body: &str, passphrase: &str) -> (String, String) {
 pub async fn list_keys(app: &AppHandle) -> Result<Vec<SshKey>, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let rows = sqlx::query(
-        "SELECT id, name, private_key, passphrase, public_key, fingerprint, comment FROM ssh_keys ORDER BY sort_order ASC, created_at DESC",
+        "SELECT id, name, private_key, passphrase, public_key, fingerprint, comment, group_name FROM ssh_keys ORDER BY sort_order ASC, created_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -1577,6 +1590,7 @@ pub async fn list_keys(app: &AppHandle) -> Result<Vec<SshKey>, String> {
             fingerprint,
             public_key,
             comment: r.try_get("comment").unwrap_or_default(),
+            group: r.try_get("group_name").unwrap_or_default(),
         });
     }
     Ok(out)
@@ -1588,7 +1602,7 @@ pub async fn list_keys(app: &AppHandle) -> Result<Vec<SshKey>, String> {
 pub async fn get_key(app: &AppHandle, id: &str) -> Result<SshKey, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let row = sqlx::query(
-        "SELECT id, name, private_key, passphrase, public_key, fingerprint, comment FROM ssh_keys WHERE id = $1",
+        "SELECT id, name, private_key, passphrase, public_key, fingerprint, comment, group_name FROM ssh_keys WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&pool)
@@ -1625,6 +1639,7 @@ pub async fn get_key(app: &AppHandle, id: &str) -> Result<SshKey, String> {
         fingerprint,
         public_key,
         comment: row.try_get("comment").unwrap_or_default(),
+        group: row.try_get("group_name").unwrap_or_default(),
     })
 }
 
@@ -1683,7 +1698,7 @@ pub async fn save_key(app: &AppHandle, k: &SshKey) -> Result<String, String> {
         (k.public_key.clone(), k.fingerprint.clone())
     };
     sqlx::query(
-        "INSERT INTO ssh_keys (id, name, private_key, passphrase, comment, public_key, fingerprint) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=$2, private_key=$3, passphrase=$4, comment=$5, public_key=$6, fingerprint=$7",
+        "INSERT INTO ssh_keys (id, name, private_key, passphrase, comment, public_key, fingerprint, group_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET name=$2, private_key=$3, passphrase=$4, comment=$5, public_key=$6, fingerprint=$7, group_name=$8",
     )
     .bind(&id)
     .bind(&k.name)
@@ -1692,6 +1707,7 @@ pub async fn save_key(app: &AppHandle, k: &SshKey) -> Result<String, String> {
     .bind(&k.comment)
     .bind(&public_key)
     .bind(&fingerprint)
+    .bind(k.group.trim())
     .execute(&pool)
     .await
     .map_err(|e| format!("cannot save credential: {e}"))?;
@@ -1756,6 +1772,7 @@ pub async fn generate_key(
         fingerprint: String::new(),
         comment: GENERATED_KEY_COMMENT.into(),
         public_key: String::new(),
+        group: String::new(),
     };
     let id = save_key(app, &draft).await?;
     // Return the fresh listing row (public data only) for the UI.
@@ -1817,7 +1834,7 @@ pub async fn delete_key(app: &AppHandle, id: &str) -> Result<(), String> {
 pub async fn list_scripts(app: &AppHandle) -> Result<Vec<SshScript>, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let rows = sqlx::query(
-        "SELECT id, name, description, content FROM ssh_scripts ORDER BY sort_order ASC, created_at DESC",
+        "SELECT id, name, description, content, group_name FROM ssh_scripts ORDER BY sort_order ASC, created_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -1830,6 +1847,7 @@ pub async fn list_scripts(app: &AppHandle) -> Result<Vec<SshScript>, String> {
             name: r.try_get("name").unwrap_or_default(),
             description: r.try_get("description").unwrap_or_default(),
             content: r.try_get("content").unwrap_or_default(),
+            group: r.try_get("group_name").unwrap_or_default(),
         })
         .collect())
 }
@@ -1842,12 +1860,13 @@ pub async fn save_script(app: &AppHandle, s: &SshScript) -> Result<String, Strin
         s.id.clone()
     };
     sqlx::query(
-        "INSERT INTO ssh_scripts (id, name, description, content) VALUES ($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET name=$2, description=$3, content=$4",
+        "INSERT INTO ssh_scripts (id, name, description, content, group_name) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET name=$2, description=$3, content=$4, group_name=$5",
     )
     .bind(&id)
     .bind(&s.name)
     .bind(&s.description)
     .bind(&s.content)
+    .bind(s.group.trim())
     .execute(&pool)
     .await
     .map_err(|e| format!("cannot save script: {e}"))?;
@@ -1892,13 +1911,7 @@ pub async fn ssh_reveal_password(app: AppHandle, server_id: String) -> Result<St
 /// kind: "server" | "key" | "script" | "proxy".
 #[tauri::command]
 pub async fn ssh_reorder_units(app: AppHandle, kind: String, ids: Vec<String>) -> Result<(), String> {
-    let table = match kind.as_str() {
-        "server" => "ssh_servers",
-        "key" => "ssh_keys",
-        "script" => "ssh_scripts",
-        "proxy" => "ssh_proxies",
-        other => return Err(format!("unknown unit kind {other}")),
-    };
+    let table = unit_table(&kind)?;
     let pool = sql(&app).await.ok_or("database unavailable")?;
     let mut tx = pool.begin().await.map_err(|e| format!("db error: {e}"))?;
     for (i, id) in ids.iter().enumerate() {
@@ -1910,6 +1923,30 @@ pub async fn ssh_reorder_units(app: AppHandle, kind: String, ids: Vec<String>) -
             .map_err(|e| format!("db error: {e}"))?;
     }
     tx.commit().await.map_err(|e| format!("db error: {e}"))
+}
+
+/// Table of a unit kind ("server" | "key" | "script" | "proxy").
+fn unit_table(kind: &str) -> Result<&'static str, String> {
+    match kind {
+        "server" => Ok("ssh_servers"),
+        "key" => Ok("ssh_keys"),
+        "script" => Ok("ssh_scripts"),
+        "proxy" => Ok("ssh_proxies"),
+        other => Err(format!("unknown unit kind {other}")),
+    }
+}
+
+/// Deletes a group: its units stay, without a group.
+#[tauri::command]
+pub async fn ssh_ungroup_units(app: AppHandle, kind: String, group: String) -> Result<(), String> {
+    let table = unit_table(&kind)?;
+    let pool = sql(&app).await.ok_or("database unavailable")?;
+    sqlx::query(&format!("UPDATE {table} SET group_name = '' WHERE group_name = ?"))
+        .bind(group.trim())
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("db error: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]

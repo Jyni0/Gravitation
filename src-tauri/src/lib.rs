@@ -85,6 +85,7 @@ pub fn run() {
             ssh::ssh_list_servers,
             ssh::ssh_save_server,
             ssh::ssh_reorder_units,
+            ssh::ssh_ungroup_units,
             ssh::ssh_reveal_password,
             ssh::ssh_delete_server,
             ssh::ssh_list_keys,

@@ -73,7 +73,7 @@ export function TitleBar({
     await win.setFullscreen(!(await win.isFullscreen()));
   };
   const MENUS: Record<string, MenuEntry[]> = {
-    File: [
+    App: [
       { label: "New Server…", shortcut: "Ctrl+N", run: onNewServer },
       "separator",
       { label: "Settings", shortcut: "Ctrl+,", run: onOpenSettings },

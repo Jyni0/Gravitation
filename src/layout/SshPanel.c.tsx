@@ -11,23 +11,27 @@ import {
   RotateCcw,
   Info,
   Copy,
+  Check,
   Eye,
   EyeOff,
   Waypoints,
+  Lock,
+  Terminal,
+  Sparkles,
 } from "lucide-react";
 import * as db from "../core/db.r";
 import type { SshKey, SshProxy, SshScript, SshServer } from "../core/types.i";
 import { useOverlayThumb } from "../hooks/useOverlayThumb.h";
+import { groupNames } from "../core/unitGroups.u";
 import { ScrollArea, Combobox, Thumb, FIELD_LABEL, Input, Button, Alert, Segmented, Spinner, IconButton, cx, TEXTAREA } from "../components";
 
 /**
  * SshPanel — the docked right-hand sidebar of SSH Client mode.
  *
- * Termius-style: creating, editing and configuring a unit is NOT a dialog.
- * A page-like column slides in from the right and stays there while you
- * work — forms are grouped into small-cap sections (Connection,
- * Authentication…) and saves surface errors inline. App SSH settings
- * (terminal theme/look) live in Settings → Terminal, not here.
+ * Creating and editing a unit is not a dialog: a column slides in from the
+ * right and stays while you work. A header names the unit; the form is a
+ * stack of cards (Connection, Authentication…), each a titled block of
+ * fields; the actions sit in a bar pinned to the bottom.
  */
 export type SshPanelTarget =
   | { kind: "server"; id?: string } // id undefined = create
@@ -38,9 +42,9 @@ export type SshPanelTarget =
 const AREA = cx(TEXTAREA, "resize-none font-mono text-[11px] leading-[1.5]");
 
 /**
- * PEM-key textarea with the app's OWN scrollbar: the native bar is hidden
- * globally (styles.css) and the overlay thumb is drawn on top — the same
- * look as every other scrollable surface (creds, scripts, the prompt box).
+ * Textarea with the app's OWN scrollbar: the native bar is hidden globally
+ * (styles.css) and the overlay thumb is drawn on top — the same look as
+ * every other scrollable surface.
  */
 function AreaField({
   className = AREA,
@@ -56,17 +60,12 @@ function AreaField({
   );
 }
 
-/** Termius-style section divider: small-caps label over a hairline. */
-function Section({ title, children }: { title: string; children?: React.ReactNode }) {
-  return (
-    <div className="h-full mt-5 first:mt-0">
-      <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--text-dim)]">
-        {title}
-      </div>
-      <div className="flex flex-col gap-3">{children}</div>
-    </div>
-  );
-}
+const KIND_META = {
+  server: { icon: Server, noun: "server", blurb: "A host you open terminals and files on." },
+  key: { icon: KeyRound, noun: "credential", blurb: "A private key servers can sign in with." },
+  script: { icon: FileCode2, noun: "script", blurb: "A command pasted into the open terminal." },
+  proxy: { icon: Waypoints, noun: "proxy", blurb: "An HTTP or SOCKS5 hop servers connect through." },
+} as const;
 
 export function SshPanel({
   target,
@@ -116,11 +115,9 @@ export function SshPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server, sshKey, script, proxy]);
 
-  const editing = !!(server || sshKey || script || proxy);
-  const noun = { server: "server", key: "credential", script: "script", proxy: "proxy" }[target.kind];
-  const title = (editing ? "Edit " : "New ") + noun;
-
-  const TitleIcon = { server: Server, key: KeyRound, script: FileCode2, proxy: Waypoints }[target.kind];
+  const unit = server ?? sshKey ?? script ?? proxy;
+  const meta = KIND_META[target.kind];
+  const TitleIcon = meta.icon;
 
   // key=… forces a fresh form state when the panel switches rows.
   const formKey = target.kind + ":" + (target.id ?? "new");
@@ -129,9 +126,8 @@ export function SshPanel({
     <motion.aside
       key="ssh-panel"
       className="selectable relative flex h-full shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg-sidebar)]"
-      /* Smooth adjust: the panel GROWS its width from 0 (and collapses back
-         on close), so the main column compresses/expands gradually instead
-         of jumping — the same feel as the chat page's content reflow. */
+      /* The panel GROWS its width from 0 (and collapses back on close), so
+         the main column compresses/expands gradually instead of jumping. */
       initial={{ width: 0, opacity: 0 }}
       animate={{ width, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
@@ -141,45 +137,153 @@ export function SshPanel({
           : { width: { duration: 0.24, ease: [0.32, 0.72, 0, 1] }, opacity: { duration: 0.15 } }
       }
     >
-      {/* Drag handle on the left edge — resizes the panel (copied from the
-          chat inspection panel: same class, same left-edge mechanics). */}
       <div className="panel-resizer" onMouseDown={onResizeStart} />
-      {/* Panel header */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border)] px-4">
-        <TitleIcon size={14} className="shrink-0 text-[var(--accent)]" />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--text-main)]">{title}</span>
-        <IconButton
-          label="Close panel" size="xs"
-          onClick={onClose}
-        >
-          <X size={13} />
+
+      {/* Header: what is being edited, in words and an icon */}
+      <div className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-4">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent)]">
+          <TitleIcon size={18} strokeWidth={1.7} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[14px] font-semibold text-[var(--text-main)]">
+            {unit ? unit.name : "New " + meta.noun}
+          </div>
+          <div className="truncate text-[11.5px] text-[var(--text-dim)]">
+            {unit ? "Edit " + meta.noun : meta.blurb}
+          </div>
+        </div>
+        <IconButton label="Close panel" size="sm" onClick={onClose}>
+          <X size={14} />
         </IconButton>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1" innerClassName="px-4 pt-4">
-        {target.kind === "server" && (
-          <ServerForm key={formKey} server={server} keys={keys} proxies={proxies} onChanged={onChanged} onClose={onClose} />
-        )}
-        {target.kind === "key" && (
-          <KeyForm key={formKey} value={sshKey} onChanged={onChanged} onClose={onClose} />
-        )}
-        {target.kind === "script" && (
-          <ScriptForm key={formKey} value={script} onChanged={onChanged} onClose={onClose} />
-        )}
-        {target.kind === "proxy" && (
-          <ProxyForm key={formKey} value={proxy} onChanged={onChanged} onClose={onClose} />
-        )}
-      </ScrollArea>
+      {target.kind === "server" && (
+        <ServerForm key={formKey} server={server} keys={keys} proxies={proxies} groups={groupNames(servers)} onChanged={onChanged} onClose={onClose} />
+      )}
+      {target.kind === "key" && (
+        <KeyForm key={formKey} value={sshKey} groups={groupNames(keys)} onChanged={onChanged} onClose={onClose} />
+      )}
+      {target.kind === "script" && (
+        <ScriptForm key={formKey} value={script} groups={groupNames(scripts)} onChanged={onChanged} onClose={onClose} />
+      )}
+      {target.kind === "proxy" && (
+        <ProxyForm key={formKey} value={proxy} groups={groupNames(proxies)} onChanged={onChanged} onClose={onClose} />
+      )}
     </motion.aside>
   );
 }
 
 /* ---------- Shared form bits ---------- */
 
-function ErrorLine({ error }: { error: string | null }) {
-  if (!error) return null;
+/** The scrolling form body over the pinned action bar. */
+function FormShell({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) {
   return (
-    <Alert className="mt-3">{error}</Alert>
+    <>
+      <ScrollArea className="min-h-0 flex-1" innerClassName="flex flex-col gap-3 px-4 pb-4 pt-1">
+        {children}
+      </ScrollArea>
+      {footer}
+    </>
+  );
+}
+
+/** A titled block of fields. */
+function Card({
+  icon: Icon,
+  title,
+  aside,
+  children,
+}: {
+  icon: typeof Server;
+  title: string;
+  /** Right side of the title row (a hint or a small action). */
+  aside?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3 rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-surface)] p-4">
+      <div className="flex min-h-5 items-center gap-2">
+        <Icon size={14} strokeWidth={1.7} className="shrink-0 text-[var(--text-dim)]" />
+        <span className="text-[12.5px] font-medium text-[var(--text-main)]">{title}</span>
+        {aside && <span className="ml-auto flex min-w-0 items-center text-[11px] text-[var(--text-dim)]">{aside}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Label over a control, optional hint under it. */
+function F({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className={FIELD_LABEL}>{label}</span>
+      {children}
+      {hint && <span className="mt-1.5 text-[11px] leading-snug text-[var(--text-dim)]">{hint}</span>}
+    </div>
+  );
+}
+
+/** A quiet explanation inside a card (empty lists, what happens next). */
+function Note({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-xl bg-[var(--bg-input)] px-3 py-2.5 text-[11.5px] leading-[1.5] text-[var(--text-muted)]">
+      <Info size={13} className="mt-px shrink-0 text-[var(--text-dim)]" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+/** Password input with show/hide and (when one is stored) a Clear button. */
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+  shown,
+  onToggleShown,
+  showLabel,
+  onClear,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  shown: boolean;
+  onToggleShown?: () => void;
+  showLabel?: string;
+  /** Present when a stored secret can be removed. */
+  onClear?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex gap-2">
+      <div className="relative min-w-0 flex-1">
+        <Input
+          className={onToggleShown ? "pr-10" : undefined}
+          type={shown ? "text" : "password"}
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+        />
+        {onToggleShown && (
+          <IconButton
+            label={showLabel ?? (shown ? "Hide" : "Show")}
+            size="xs"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2"
+            onClick={onToggleShown}
+          >
+            {shown ? <EyeOff size={13} /> : <Eye size={13} />}
+          </IconButton>
+        )}
+      </div>
+      {onClear && (
+        <Button variant="secondary" icon={<RotateCcw size={12} />} onClick={onClear} title="Remove the stored value">
+          Clear
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -187,42 +291,56 @@ function FormButtons({
   onSave,
   saveLabel,
   busy,
+  error,
   onDelete,
   onClose,
 }: {
   onSave: () => void;
   saveLabel: string;
   busy?: boolean;
+  error?: string | null;
   onDelete?: () => void;
   onClose: () => void;
 }) {
   return (
-    <div className="sticky bottom-0 -mx-4 mt-6 flex items-center gap-2 border-t border-[var(--border)] bg-[var(--bg-sidebar)] px-4 py-3">
-      {onDelete && (
-        <button
-          className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[12px] text-[var(--text-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--diff-del)]"
-          onClick={onDelete}
-        >
-          <Trash2 size={13} /> Delete
-        </button>
-      )}
-      <span className="flex-1" />
-      <Button
-        variant="secondary"
-        onClick={onClose}
-      >
-        Cancel
-      </Button>
-      <Button
-        variant="primary"
-        onClick={onSave}
-        disabled={busy}
-      >
-        <Save size={13} /> {saveLabel}
-      </Button>
+    <div className="shrink-0 border-t border-[var(--border)] px-4 py-3">
+      {error && <Alert className="mb-3">{error}</Alert>}
+      <div className="flex items-center gap-2">
+        {onDelete && (
+          <Button variant="danger-ghost" icon={<Trash2 size={13} />} onClick={onDelete} disabled={busy}>
+            Delete
+          </Button>
+        )}
+        <span className="flex-1" />
+        <Button variant="secondary" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button variant="primary" icon={busy ? <Spinner size={13} /> : <Save size={13} />} onClick={onSave} disabled={busy}>
+          {saveLabel}
+        </Button>
+      </div>
     </div>
   );
 }
+
+/** Group of the unit: picked from the groups in use, or a new one typed in the search. */
+function GroupField({ value, onChange, groups }: { value: string; onChange: (v: string) => void; groups: string[] }) {
+  const names = value && !groups.includes(value) ? [...groups, value].sort((a, b) => a.localeCompare(b)) : groups;
+  return (
+    <F label="Group">
+      <Combobox
+        value={value}
+        onChange={onChange}
+        placeholder="Search or type a new group…"
+        emptyText="Type a name to create a group"
+        createLabel={(q) => `New group "${q}"`}
+        options={[{ value: "", label: "No group" }, ...names.map((g) => ({ value: g, label: g }))]}
+      />
+    </F>
+  );
+}
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /* ---------- Server form ---------- */
 
@@ -230,12 +348,14 @@ function ServerForm({
   server,
   keys,
   proxies,
+  groups,
   onChanged,
   onClose,
 }: {
   server?: SshServer;
   keys: SshKey[];
   proxies: SshProxy[];
+  groups: string[];
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -245,10 +365,10 @@ function ServerForm({
   const [username, setUsername] = useState(server?.username ?? "root");
   // Termius-style dual auth: BOTH a password and a saved credential key may
   // be set at once — the connector tries the key first, then the password.
-  // Inline key paste is gone: private bodies live only in Credentials.
   const [password, setPassword] = useState("");
   const [keyId, setKeyId] = useState(server?.key_id ?? "");
   const [proxyId, setProxyId] = useState(server?.proxy_id ?? "");
+  const [group, setGroup] = useState(server?.group ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const hasStoredPassword = !!server?.has_password;
@@ -272,29 +392,33 @@ function ServerForm({
         setPassword(await db.sshRevealPassword(server.id));
         setRevealed(true);
       } catch (e) {
-        return setError(e instanceof Error ? e.message : String(e));
+        return setError(errText(e));
       }
     }
     setShowPassword(true);
   };
 
-  const forgetHostKey = async () => {
-    if (!server) return;
-    if (!confirm("Forget the pinned host key? The next connect trusts whatever key the server presents — only do this after reinstalling the server.")) return;
+  const run = async (job: () => Promise<void>) => {
     setBusy(true);
     try {
-      // "-" is the wire signal to clear the pinned fingerprint.
-      await db.saveSshServer({ ...server, password: "", host_key: "-" });
+      await job();
       onChanged();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const save = async () => {
+  const forgetHostKey = () => {
+    if (!server) return;
+    if (!confirm("Forget the pinned host key? The next connect trusts whatever key the server presents — only do this after reinstalling the server.")) return;
+    // "-" is the wire signal to clear the pinned fingerprint.
+    void run(() => db.saveSshServer({ ...server, password: "", host_key: "-" }).then(() => {}));
+  };
+
+  const save = () => {
     setError(null);
     if (!name.trim()) return setError("Give the server a name.");
     if (!host.trim()) return setError("Host is required.");
@@ -305,138 +429,91 @@ function ServerForm({
     if (!server && !password && !keyId) {
       return setError("Set a password and/or pick a saved key credential.");
     }
-    setBusy(true);
-    try {
-      await db.saveSshServer({
-        id: server?.id ?? "",
-        name: name.trim(),
-        host: host.trim(),
-        port: portNum,
-        username: username.trim() || "root",
-        // "cred" when a key is linked (tried first on connect), else password.
-        auth: keyId ? "cred" : "password",
-        // Blank password means "keep stored" when editing — Rust never sends
-        // plaintext back; "-" (clear button) removes it.
-        password,
-        private_key: "",
-        key_id: keyId,
-        host_key: server?.host_key ?? "",
-        has_password: hasStoredPassword,
-        os: server?.os ?? "",
-        proxy_id: proxyId,
-      });
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    void run(() =>
+      db
+        .saveSshServer({
+          id: server?.id ?? "",
+          name: name.trim(),
+          host: host.trim(),
+          port: portNum,
+          username: username.trim() || "root",
+          // "cred" when a key is linked (tried first on connect), else password.
+          auth: keyId ? "cred" : "password",
+          // Blank password keeps the stored one when editing; "-" removes it.
+          password,
+          private_key: "",
+          key_id: keyId,
+          host_key: server?.host_key ?? "",
+          has_password: hasStoredPassword,
+          os: server?.os ?? "",
+          proxy_id: proxyId,
+          group: group.trim(),
+        })
+        .then(() => {}),
+    );
   };
 
-  const del = async () => {
-    if (!confirm("Delete this server? Its audit rows stay in Logs.")) return;
-    setBusy(true);
-    try {
-      if (server) await db.deleteSshServer(server.id);
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const del = () => {
+    if (!server || !confirm("Delete this server? Its audit rows stay in Logs.")) return;
+    void run(() => db.deleteSshServer(server.id));
   };
 
-  const clearPassword = async () => {
-    if (!server) return;
-    setBusy(true);
-    try {
-      // "-" is the wire signal to REMOVE the stored password (key-only host).
-      await db.saveSshServer({ ...server, password: "-" });
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // "-" is the wire signal to REMOVE the stored password (key-only host).
+  const clearPassword = () => server && void run(() => db.saveSshServer({ ...server, password: "-" }).then(() => {}));
+
+  const address = `${username.trim() || "root"}@${host.trim() || "host"}${port && port !== "22" ? ":" + port : ""}`;
 
   return (
-    <div className="h-full flex flex-col">
-      <Section title="Connection">
-        <div>
-          <label className={FIELD_LABEL}>Label</label>
+    <FormShell
+      footer={
+        <FormButtons
+          onSave={save}
+          saveLabel={server ? "Save" : "Create"}
+          busy={busy}
+          error={error}
+          onDelete={server ? del : undefined}
+          onClose={onClose}
+        />
+      }
+    >
+      <Card icon={Server} title="Connection" aside={<span className="truncate font-mono">{address}</span>}>
+        <F label="Label">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="prod-web-1" autoFocus />
+        </F>
+        <div className="grid grid-cols-[1fr_88px] gap-3">
+          <F label="Host">
+            <Input mono value={host} onChange={(e) => setHost(e.target.value)} placeholder="10.0.0.5 or example.com" />
+          </F>
+          <F label="Port">
+            <Input mono value={port} onChange={(e) => setPort(e.target.value)} placeholder="22" />
+          </F>
         </div>
-        <div>
-          <label className={FIELD_LABEL}>Hostname or IP</label>
-          <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="10.0.0.5 or example.com" />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={FIELD_LABEL}>Port</label>
-            <Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="22" />
-          </div>
-          <div>
-            <label className={FIELD_LABEL}>Username</label>
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="root" />
-          </div>
-        </div>
-      </Section>
+        <F label="Username">
+          <Input mono value={username} onChange={(e) => setUsername(e.target.value)} placeholder="root" />
+        </F>
+        <GroupField value={group} onChange={setGroup} groups={groups} />
+      </Card>
 
-      <Section title="Authentication">
-        <div>
-          <label className={FIELD_LABEL}>
-            Password
-            {server ? " — blank keeps the stored one" : ""}
-          </label>
-          <div className="flex gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Input
-                className="pr-9"
-                type={showPassword ? "text" : "password"}
-                autoComplete="off"
-                spellCheck={false}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={hasStoredPassword ? "•••••••• (stored)" : "optional"}
-              />
-              {(password || hasStoredPassword) && (
-                <IconButton
-                  type="button"
-                  label={showPassword ? "Hide password" : "Show password (hides again after 30 s; logged)"} size="xs" className="absolute right-1.5 top-1/2"
-                  onClick={() => void toggleShow()}
-                >
-                  {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
-                </IconButton>
-              )}
-            </div>
-            {hasStoredPassword && (
-              <button
-                type="button"
-                className="flex h-9 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[11px] text-[var(--text-muted)] transition-colors hover:border-[var(--diff-del)]/50 hover:text-[var(--diff-del)]"
-                onClick={() => void clearPassword()}
-                title="Remove the stored password"
-              >
-                <RotateCcw size={11} /> Clear
-              </button>
-            )}
-          </div>
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Key credential — from the Credentials list only</label>
+      <Card icon={Lock} title="Authentication" aside="key first, then password">
+        <F label="Password" hint={server && hasStoredPassword ? "Leave blank to keep the stored one." : undefined}>
+          <SecretInput
+            value={password}
+            onChange={setPassword}
+            placeholder={hasStoredPassword ? "•••••••• stored" : "optional"}
+            shown={showPassword}
+            onToggleShown={password || hasStoredPassword ? () => void toggleShow() : undefined}
+            showLabel={showPassword ? "Hide password" : "Show password (hides again after 30 s; logged)"}
+            onClear={hasStoredPassword ? clearPassword : undefined}
+          />
+        </F>
+        <F label="Key credential">
           {keys.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-[11.5px] text-[var(--text-muted)]">
-              No credentials yet — add or generate one in Credentials (sidebar +) first.
-            </div>
+            <Note>No credentials yet — add or generate one under Credentials, then pick it here.</Note>
           ) : (
-            /* Searchable dropdown — the credential list can grow long */
             <Combobox
               value={keyId}
               onChange={setKeyId}
-              placeholder="No key — password only"
+              placeholder="Search credentials…"
               emptyText="No credential matches"
               options={[
                 { value: "", label: "No key — password only" },
@@ -449,77 +526,56 @@ function ServerForm({
               ]}
             />
           )}
-        </div>
-      </Section>
+        </F>
+      </Card>
 
-      <Section title="Proxy">
-        <div>
-          <label className={FIELD_LABEL}>Connect through — optional</label>
-          {proxies.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-[11.5px] text-[var(--text-muted)]">
-              No proxies yet — add one on the Units page (Proxies tab). Without one the server is reached directly.
-            </div>
-          ) : (
-            <Combobox
-              value={proxyId}
-              onChange={setProxyId}
-              placeholder="Direct connection"
-              emptyText="No proxy matches"
-              options={[
-                { value: "", label: "Direct connection" },
-                ...proxies.map((p) => ({
-                  value: p.id,
-                  label: p.name,
-                  hint: `${p.kind === "socks5" ? "SOCKS5" : "HTTP"} ${p.host}:${p.port}`,
-                })),
-              ]}
-            />
-          )}
-        </div>
-      </Section>
+      <Card icon={Waypoints} title="Connect through">
+        {proxies.length === 0 ? (
+          <Note>No proxies yet — the server is reached directly. Add one on the Units page (Proxies).</Note>
+        ) : (
+          <Combobox
+            value={proxyId}
+            onChange={setProxyId}
+            placeholder="Search proxies…"
+            emptyText="No proxy matches"
+            options={[
+              { value: "", label: "Direct connection" },
+              ...proxies.map((p) => ({
+                value: p.id,
+                label: p.name,
+                hint: `${p.kind === "socks5" ? "SOCKS5" : "HTTP"} ${p.host}:${p.port}`,
+              })),
+            ]}
+          />
+        )}
+      </Card>
 
       {server && (
-        <Section title="Security">
-          <div>
-            <label className={FIELD_LABEL}>Host key (pinned on first connect)</label>
+        <Card icon={ShieldCheck} title="Host key">
+          {server.host_key ? (
             <div className="flex items-center gap-2">
               <span
-                className="min-w-0 flex-1 truncate rounded-lg border border-[var(--border)] bg-[var(--bg-input)] px-2.5 py-2 font-mono text-[11px] text-[var(--text-muted)]"
-                title={server.host_key || undefined}
+                className="flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-xl bg-[var(--bg-input)] px-3 font-mono text-[11px] text-[var(--text-muted)]"
+                title={server.host_key}
               >
-                {server.host_key ? (
-                  <>
-                    <ShieldCheck size={11} className="mr-1 inline text-[var(--diff-add,#4ec9b0)]" />
-                    {server.host_key}
-                  </>
-                ) : (
-                  "Not pinned yet — the first connect pins it"
-                )}
+                <ShieldCheck size={12} className="shrink-0 text-[var(--diff-add,#4ec9b0)]" />
+                <span className="truncate">{server.host_key}</span>
               </span>
-              {server.host_key && (
-                <button
-                  type="button"
-                  className="flex h-9 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[11px] text-[var(--text-muted)] transition-colors hover:border-[var(--diff-del)]/50 hover:text-[var(--diff-del)]"
-                  onClick={() => void forgetHostKey()}
-                  title="Only after the server was reinstalled — a changed key can mean an attack"
-                >
-                  <RotateCcw size={11} /> Forget
-                </button>
-              )}
+              <Button
+                variant="secondary"
+                icon={<RotateCcw size={12} />}
+                onClick={forgetHostKey}
+                title="Only after the server was reinstalled — a changed key can mean an attack"
+              >
+                Forget
+              </Button>
             </div>
-          </div>
-        </Section>
+          ) : (
+            <Note>Not pinned yet — the first connect pins the server's key.</Note>
+          )}
+        </Card>
       )}
-
-      <ErrorLine error={error} />
-      <FormButtons
-        onSave={() => void save()}
-        saveLabel={server ? "Save" : "Create"}
-        busy={busy}
-        onDelete={server ? () => void del() : undefined}
-        onClose={onClose}
-      />
-    </div>
+    </FormShell>
   );
 }
 
@@ -534,18 +590,41 @@ const KEY_ALGORITHMS: Array<{ id: string; label: string }> = [
   { id: "rsa", label: "RSA 4096 — max compatibility" },
 ];
 
+/** Copy-to-clipboard button with a short "Copied" state. */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — the text is selectable in the box anyway */
+    }
+  };
+  return (
+    <Button variant="secondary" icon={copied ? <Check size={12} /> : <Copy size={12} />} onClick={() => void copy()}>
+      {copied ? "Copied" : label}
+    </Button>
+  );
+}
+
 function KeyForm({
   value,
+  groups,
   onChanged,
   onClose,
 }: {
   value?: SshKey;
+  groups: string[];
   onChanged: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(value?.name ?? "");
+  const [group, setGroup] = useState(value?.group ?? "");
   const [privateKey, setPrivateKey] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** Create mode: paste an existing body OR generate a fresh keypair. */
@@ -553,7 +632,6 @@ function KeyForm({
   const [algorithm, setAlgorithm] = useState("ed25519");
   /** Set right after generation: shows the public key to copy to servers. */
   const [generated, setGenerated] = useState<SshKey | null>(null);
-  const [copied, setCopied] = useState(false);
   /**
    * Secrets are DECRYPTED ONLY WHEN THIS FORM OPENS: editing an existing
    * credential fetches the full row (private key + passphrase visible);
@@ -576,7 +654,7 @@ function KeyForm({
         setFingerprint(full.fingerprint ?? "");
         setComment(full.comment ?? "");
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(errText(e));
       } finally {
         if (!cancelled) setLoadingSecrets(false);
       }
@@ -586,8 +664,7 @@ function KeyForm({
     };
   }, [value]);
 
-  // Import mode: derive the public half live from the pasted body (debounced)
-  // so the user sees Name / PrivateKey / PublicKey before saving.
+  // Import mode: derive the public half live from the pasted body (debounced).
   useEffect(() => {
     if (value || mode !== "paste") return;
     if (!privateKey.trim()) {
@@ -615,13 +692,15 @@ function KeyForm({
     setBusy(true);
     try {
       const row = await db.generateSshKey(name.trim(), algorithm, passphrase);
+      // Blank secrets keep the generated body; only the group is written.
+      if (group.trim()) await db.saveSshKey({ ...row, group: group.trim() });
       // Fetch the FULL row (secrets decrypted) so the generated screen can
       // show the private key too — the only moment it is ever displayed.
       const full = await db.getSshKey(row.id).catch(() => row);
       setGenerated(full);
       onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
@@ -645,23 +724,14 @@ function KeyForm({
         fingerprint,
         comment,
         public_key: publicKey,
+        group: group.trim(),
       });
       onChanged();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const copyPublic = async (pub: string) => {
-    try {
-      await navigator.clipboard.writeText(pub);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable — the key is selectable in the box anyway */
     }
   };
 
@@ -673,184 +743,155 @@ function KeyForm({
       onChanged();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errText(e));
     } finally {
       setBusy(false);
     }
   };
 
-  // Right after generation: show the public half + copy button instead of
-  // the form (the row is already saved; Done closes the panel).
+  // Right after generation: the public half to copy (the row is saved).
   if (generated) {
     return (
-      <div className="flex flex-col">
-        <Section title="Generated">
-          <div className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--accent)]">
-            <ShieldCheck size={13} /> {generated.comment || "Generated By Gravitation"}
+      <FormShell
+        footer={
+          <div className="flex shrink-0 justify-end border-t border-[var(--border)] px-4 py-3">
+            <Button variant="primary" icon={<Check size={13} />} onClick={onClose}>
+              Done
+            </Button>
           </div>
-          <div>
-            <label className={FIELD_LABEL}>Name</label>
-            <div className="text-[12.5px] text-[var(--text-main)]">{generated.name}</div>
-          </div>
-          <div>
-            <label className={FIELD_LABEL}>Fingerprint</label>
-            <div className="break-all font-mono text-[10.5px] text-[var(--text-muted)]">{generated.fingerprint}</div>
-          </div>
-          {generated.private_key && (
-            <div>
-              <label className={FIELD_LABEL}>Private key — shown only here, this once</label>
-              <AreaField
-                className={AREA + " h-28"}
-                readOnly
-                value={generated.private_key}
-                onFocus={(e) => e.currentTarget.select()}
-              />
+        }
+      >
+        <Card
+          icon={Sparkles}
+          title={generated.name}
+          aside={<span className="text-[var(--accent)]">{generated.comment || "Generated By Gravitation"}</span>}
+        >
+          <F label="Fingerprint">
+            <div className="break-all rounded-xl bg-[var(--bg-input)] px-3 py-2 font-mono text-[11px] text-[var(--text-muted)]">
+              {generated.fingerprint}
             </div>
+          </F>
+          <F label="Public key" hint="Put it into ~/.ssh/authorized_keys on the server.">
+            <AreaField className={AREA + " h-24"} readOnly value={generated.public_key} onFocus={(e) => e.currentTarget.select()} />
+            <div className="mt-2">
+              <CopyButton text={generated.public_key ?? ""} label="Copy public key" />
+            </div>
+          </F>
+          {generated.private_key && (
+            <F label="Private key" hint="Shown only here, this once.">
+              <AreaField className={AREA + " h-28"} readOnly value={generated.private_key} onFocus={(e) => e.currentTarget.select()} />
+            </F>
           )}
-          <div>
-            <label className={FIELD_LABEL}>Public key — put it on the server (authorized_keys)</label>
-            <AreaField
-              className={AREA + " h-24"}
-              readOnly
-              value={generated.public_key}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <button
-              type="button"
-              className="mt-2 flex h-7 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[11px] text-[var(--text-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--text-main)]"
-              onClick={() => void copyPublic(generated.public_key ?? "")}
-            >
-              <Copy size={11} /> {copied ? "Copied" : "Copy public key"}
-            </button>
-          </div>
-        </Section>
-        <div className="sticky bottom-0 mt-4 flex justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-sidebar)] px-1 pt-3">
-          <Button
-            type="button"
-            variant="primary"
-            onClick={onClose}
-          >
-            Done
-          </Button>
-        </div>
-      </div>
+        </Card>
+      </FormShell>
     );
   }
 
+  const showBody = !!value || mode === "paste";
+
   return (
-    <div className="h-full flex flex-col">
-      <Section title="Credential">
-        <div>
-          <label className={FIELD_LABEL}>Name</label>
+    <FormShell
+      footer={
+        <FormButtons
+          onSave={mode === "generate" && !value ? () => void gen() : () => void save()}
+          saveLabel={!value && mode === "generate" ? "Generate" : value ? "Save" : "Import"}
+          busy={busy}
+          error={error}
+          onDelete={value ? () => void del() : undefined}
+          onClose={onClose}
+        />
+      }
+    >
+      {!value && (
+        <Segmented
+          className="min-h-9"
+          fill
+          options={[
+            { value: "generate", label: "Generate new" },
+            { value: "paste", label: "Import existing" },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+      )}
+
+      <Card icon={KeyRound} title="Credential">
+        <F label="Name">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="deploy key" autoFocus />
-        </div>
-        {!value && (
-          <Segmented
-            fill
-            options={[
-              { value: "generate", label: "Generate new" },
-              { value: "paste", label: "Import existing" },
-            ]}
-            value={mode}
-            onChange={setMode}
-          />
-        )}
-        {!value && mode === "generate" && (
-          <>
-            <div>
-              <label className={FIELD_LABEL}>Algorithm</label>
-              <Combobox
-                searchable={false}
-                value={algorithm}
-                onChange={setAlgorithm}
-                options={KEY_ALGORITHMS.map((a) => ({ value: a.id, label: a.label }))}
-              />
-            </div>
-            <div>
-              <label className={FIELD_LABEL}>Passphrase — optional</label>
-              <Input type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} placeholder="encrypts the generated key" />
-            </div>
-            <div className="flex items-start gap-1.5 text-[11px] leading-[1.5] text-[var(--text-dim)]">
-              <Info size={12} className="mt-0.5 shrink-0" />
-              The keypair is created on this machine and stored encrypted; its
-              comment will read “Generated By Gravitation”.
-            </div>
-          </>
-        )}
-        {(value || mode === "paste") && (
-          <div>
-            <label className={FIELD_LABEL}>Passphrase{value ? "" : " (if the key is encrypted)"}</label>
-            <Input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              disabled={loadingSecrets}
-              placeholder={loadingSecrets ? "••••••••" : ""}
+        </F>
+        <GroupField value={group} onChange={setGroup} groups={groups} />
+      </Card>
+
+      {!showBody && (
+        <Card icon={Sparkles} title="New keypair">
+          <F label="Algorithm">
+            <Combobox
+              searchable={false}
+              value={algorithm}
+              onChange={setAlgorithm}
+              options={KEY_ALGORITHMS.map((a) => ({ value: a.id, label: a.label }))}
             />
-          </div>
-        )}
-        {(value || mode === "paste") && (
-          <div>
-            <label className={FIELD_LABEL}>Private key</label>
-            {loadingSecrets ? (
-              <div className="flex h-32 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-input)] text-[11.5px] text-[var(--text-dim)]">
-                <Spinner size={13} /> Decrypting…
+          </F>
+          <F label="Passphrase" hint="Optional — encrypts the generated key.">
+            <SecretInput value={passphrase} onChange={setPassphrase} placeholder="none" shown={showPass} onToggleShown={() => setShowPass((v) => !v)} />
+          </F>
+          <Note>The keypair is made on this machine and stored encrypted; its comment reads “Generated By Gravitation”.</Note>
+        </Card>
+      )}
+
+      {showBody && (
+        <Card icon={Lock} title="Private key" aside={loadingSecrets ? "decrypting…" : undefined}>
+          {loadingSecrets ? (
+            <div className="flex h-32 items-center justify-center gap-2 rounded-xl bg-[var(--bg-input)] text-[11.5px] text-[var(--text-dim)]">
+              <Spinner size={13} /> Decrypting…
+            </div>
+          ) : (
+            <AreaField
+              className={AREA + " h-36"}
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+              spellCheck={false}
+            />
+          )}
+          <F label={value ? "Passphrase" : "Passphrase — if the key is encrypted"}>
+            <SecretInput
+              value={passphrase}
+              onChange={setPassphrase}
+              placeholder={loadingSecrets ? "••••••••" : "none"}
+              shown={showPass}
+              onToggleShown={() => setShowPass((v) => !v)}
+              disabled={loadingSecrets}
+            />
+          </F>
+        </Card>
+      )}
+
+      {/* Public key — derived, read-only: live while pasting, from the
+          decrypted row when editing. */}
+      {showBody && (
+        <Card
+          icon={ShieldCheck}
+          title="Public key"
+          aside={fingerprint ? <span className="truncate font-mono text-[10.5px]">{fingerprint}</span> : undefined}
+        >
+          {publicKey ? (
+            <>
+              <AreaField className={AREA + " h-16"} readOnly value={publicKey} onFocus={(e) => e.currentTarget.select()} />
+              <div>
+                <CopyButton text={publicKey} label="Copy public key" />
               </div>
-            ) : (
-              <AreaField
-                className={AREA + " h-32"}
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                spellCheck={false}
-              />
-            )}
-          </div>
-        )}
-        {/* Public key — derived automatically, read-only (Name / PrivateKey /
-            PublicKey structure): in import mode it appears live while typing,
-            when editing it comes from the decrypted row. */}
-        {(value || mode === "paste") && (
-          <div>
-            <label className={FIELD_LABEL}>Public key</label>
-            {publicKey ? (
-              <>
-                <AreaField className={AREA + " h-16"} readOnly value={publicKey} onFocus={(e) => e.currentTarget.select()} />
-                <div className="mt-1.5 flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="flex h-7 w-38 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[11px] text-[var(--text-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--text-main)]"
-                    onClick={() => void copyPublic(publicKey)}
-                  >
-                    <Copy size={11} /> {copied ? "Copied" : "Copy public key"}
-                  </button>
-                  {fingerprint && (
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <ShieldCheck size={11} className="shrink-0 text-[var(--accent)]" />
-                      <span className="truncate font-mono text-[10px] text-[var(--text-dim)]">{fingerprint}</span>
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-[11px] text-[var(--text-dim)]">
-                {privateKey.trim()
-                  ? "Cannot parse this private key yet — check the body and passphrase."
-                  : "Appears here once a private key is pasted."}
-              </div>
-            )}
-          </div>
-        )}
-      </Section>
-      <ErrorLine error={error} />
-      <FormButtons
-        onSave={mode === "generate" && !value ? () => void gen() : () => void save()}
-        saveLabel={!value && mode === "generate" ? "Generate" : value ? "Save" : "Create"}
-        busy={busy}
-        onDelete={value ? () => void del() : undefined}
-        onClose={onClose}
-      />
-    </div>
+            </>
+          ) : (
+            <Note>
+              {privateKey.trim()
+                ? "Cannot read this private key yet — check the body and the passphrase."
+                : "Appears here once a private key is pasted."}
+            </Note>
+          )}
+        </Card>
+      )}
+    </FormShell>
   );
 }
 
@@ -858,85 +899,91 @@ function KeyForm({
 
 function ScriptForm({
   value,
+  groups,
   onChanged,
   onClose,
 }: {
   value?: SshScript;
+  groups: string[];
   onChanged: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(value?.name ?? "");
   const [description, setDescription] = useState(value?.description ?? "");
+  const [group, setGroup] = useState(value?.group ?? "");
   const [content, setContent] = useState(value?.content ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const save = async () => {
+  const run = async (job: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await job();
+      onChanged();
+      onClose();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = () => {
     setError(null);
     if (!name.trim()) return setError("Give the script a name.");
     if (!content.trim()) return setError("The command body is empty.");
-    setBusy(true);
-    try {
-      await db.saveSshScript({
+    void run(() =>
+      db.saveSshScript({
         id: value?.id ?? "",
         name: name.trim(),
         description: description.trim(),
         content,
-      });
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+        group: group.trim(),
+      }),
+    );
   };
 
-  const del = async () => {
-    if (!confirm("Delete this script?")) return;
-    setBusy(true);
-    try {
-      if (value) await db.deleteSshScript(value.id);
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const del = () => {
+    if (!value || !confirm("Delete this script?")) return;
+    void run(() => db.deleteSshScript(value.id));
   };
+
+  const lines = content ? content.split("\n").length : 0;
 
   return (
-    <div className="h-full flex flex-col">
-      <Section title="Script">
-        <div>
-          <label className={FIELD_LABEL}>Label</label>
+    <FormShell
+      footer={
+        <FormButtons
+          onSave={save}
+          saveLabel={value ? "Save" : "Create"}
+          busy={busy}
+          error={error}
+          onDelete={value ? del : undefined}
+          onClose={onClose}
+        />
+      }
+    >
+      <Card icon={FileCode2} title="Script">
+        <F label="Label">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Disk usage" autoFocus />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Description</label>
-          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it does (optional)" />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Command</label>
-          <AreaField
-            className={AREA + " h-44 text-[12px]"}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder={"df -h"}
-            spellCheck={false}
-          />
-        </div>
-      </Section>
-      <ErrorLine error={error} />
-      <FormButtons
-        onSave={() => void save()}
-        saveLabel={value ? "Save" : "Create"}
-        busy={busy}
-        onDelete={value ? () => void del() : undefined}
-        onClose={onClose}
-      />
-    </div>
+        </F>
+        <F label="Description">
+          <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it does — optional" />
+        </F>
+        <GroupField value={group} onChange={setGroup} groups={groups} />
+      </Card>
+
+      <Card icon={Terminal} title="Command" aside={lines ? `${lines} line${lines > 1 ? "s" : ""}` : undefined}>
+        <AreaField
+          className={AREA + " h-56 text-[12px]"}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder={"df -h"}
+          spellCheck={false}
+        />
+        <Note>Click the script in the sidebar while a terminal is open — it is pasted there.</Note>
+      </Card>
+    </FormShell>
   );
 }
 
@@ -946,15 +993,18 @@ const DEFAULT_PROXY_PORT = { http: 8080, socks5: 1080 } as const;
 
 function ProxyForm({
   value,
+  groups,
   onChanged,
   onClose,
 }: {
   value?: SshProxy;
+  groups: string[];
   onChanged: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(value?.name ?? "");
   const [kind, setKind] = useState<SshProxy["kind"]>(value?.kind ?? "socks5");
+  const [group, setGroup] = useState(value?.group ?? "");
   const [host, setHost] = useState(value?.host ?? "");
   const [port, setPort] = useState(String(value?.port ?? DEFAULT_PROXY_PORT.socks5));
   const [username, setUsername] = useState(value?.username ?? "");
@@ -971,7 +1021,20 @@ function ProxyForm({
     setKind(k);
   };
 
-  const save = async () => {
+  const run = async (job: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await job();
+      onChanged();
+      onClose();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = () => {
     setError(null);
     if (!name.trim()) return setError("Give the proxy a name.");
     if (!host.trim()) return setError("Host is required.");
@@ -979,9 +1042,8 @@ function ProxyForm({
     if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
       return setError("Port must be a number from 1 to 65535.");
     }
-    setBusy(true);
-    try {
-      await db.saveSshProxy({
+    void run(() =>
+      db.saveSshProxy({
         id: value?.id ?? "",
         name: name.trim(),
         kind,
@@ -991,39 +1053,38 @@ function ProxyForm({
         // "" keeps the stored password, "-" removes it.
         password: password || (clearPassword ? "-" : ""),
         has_password: stored,
-      });
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+        group: group.trim(),
+      }),
+    );
   };
 
-  const del = async () => {
-    if (!confirm("Delete this proxy? Servers using it will connect directly.")) return;
-    setBusy(true);
-    try {
-      if (value) await db.deleteSshProxy(value.id);
-      onChanged();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  const del = () => {
+    if (!value || !confirm("Delete this proxy? Servers using it will connect directly.")) return;
+    void run(() => db.deleteSshProxy(value.id));
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <Section title="Proxy">
-        <div>
-          <label className={FIELD_LABEL}>Label</label>
+    <FormShell
+      footer={
+        <FormButtons
+          onSave={save}
+          saveLabel={value ? "Save" : "Create"}
+          busy={busy}
+          error={error}
+          onDelete={value ? del : undefined}
+          onClose={onClose}
+        />
+      }
+    >
+      <Card
+        icon={Waypoints}
+        title="Proxy"
+        aside={<span className="truncate font-mono">{`${kind === "socks5" ? "socks5" : "http"}://${host.trim() || "host"}:${port}`}</span>}
+      >
+        <F label="Label">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="office socks" autoFocus />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Type</label>
+        </F>
+        <F label="Type">
           <Segmented
             fill
             options={[
@@ -1033,72 +1094,40 @@ function ProxyForm({
             value={kind}
             onChange={pickKind}
           />
+        </F>
+        <div className="grid grid-cols-[1fr_88px] gap-3">
+          <F label="Host">
+            <Input mono value={host} onChange={(e) => setHost(e.target.value)} placeholder="proxy.example.com" />
+          </F>
+          <F label="Port">
+            <Input mono value={port} onChange={(e) => setPort(e.target.value)} />
+          </F>
         </div>
-        <div className="grid grid-cols-[1fr_96px] gap-3">
-          <div>
-            <label className={FIELD_LABEL}>Host</label>
-            <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="proxy.example.com" />
-          </div>
-          <div>
-            <label className={FIELD_LABEL}>Port</label>
-            <Input value={port} onChange={(e) => setPort(e.target.value)} />
-          </div>
-        </div>
-      </Section>
+        <GroupField value={group} onChange={setGroup} groups={groups} />
+      </Card>
 
-      <Section title="Authentication — optional">
-        <div>
-          <label className={FIELD_LABEL}>Username</label>
+      <Card icon={Lock} title="Authentication" aside="optional">
+        <F label="Username">
           <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="none" autoComplete="off" />
-        </div>
-        <div>
-          <label className={FIELD_LABEL}>Password{stored ? " — blank keeps the stored one" : ""}</label>
-          <div className="flex gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Input
-                className="pr-9"
-                type={showPassword ? "text" : "password"}
-                autoComplete="off"
-                spellCheck={false}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={stored ? "•••••••• (stored)" : "none"}
-              />
-              {password && (
-                <IconButton
-                  type="button"
-                  label={showPassword ? "Hide password" : "Show password"} size="xs" className="absolute right-1.5 top-1/2"
-                  onClick={() => setShowPassword((v) => !v)}
-                >
-                  {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
-                </IconButton>
-              )}
-            </div>
-            {stored && (
-              <button
-                type="button"
-                className="flex h-9 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-2 text-[11px] text-[var(--text-muted)] transition-colors hover:border-[var(--diff-del)]/50 hover:text-[var(--diff-del)]"
-                onClick={() => {
-                  setClearPassword(true);
-                  setPassword("");
-                }}
-                title="Remove the stored password on save"
-              >
-                <RotateCcw size={11} /> Clear
-              </button>
-            )}
-          </div>
-        </div>
-      </Section>
-
-      <ErrorLine error={error} />
-      <FormButtons
-        onSave={() => void save()}
-        saveLabel={value ? "Save" : "Create"}
-        busy={busy}
-        onDelete={value ? () => void del() : undefined}
-        onClose={onClose}
-      />
-    </div>
+        </F>
+        <F label="Password" hint={stored ? "Leave blank to keep the stored one." : undefined}>
+          <SecretInput
+            value={password}
+            onChange={setPassword}
+            placeholder={stored ? "•••••••• stored" : "none"}
+            shown={showPassword}
+            onToggleShown={password ? () => setShowPassword((v) => !v) : undefined}
+            onClear={
+              stored
+                ? () => {
+                    setClearPassword(true);
+                    setPassword("");
+                  }
+                : undefined
+            }
+          />
+        </F>
+      </Card>
+    </FormShell>
   );
 }

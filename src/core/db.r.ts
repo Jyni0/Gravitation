@@ -107,6 +107,7 @@ interface RustServer {
   hasPassword?: boolean;
   os?: string;
   proxyId?: string;
+  group?: string;
 }
 
 function toServer(r: RustServer): SshServer {
@@ -124,6 +125,7 @@ function toServer(r: RustServer): SshServer {
     has_password: !!r.hasPassword,
     os: r.os ?? "",
     proxy_id: r.proxyId ?? "",
+    group: r.group ?? "",
   };
 }
 
@@ -140,6 +142,7 @@ function toRustServer(s: SshServer): RustServer {
     keyId: s.key_id ?? "",
     hostKey: s.host_key ?? "",
     proxyId: s.proxy_id ?? "",
+    group: s.group ?? "",
   };
 }
 
@@ -152,6 +155,7 @@ interface RustKey {
   fingerprint?: string;
   comment?: string;
   publicKey?: string;
+  group?: string;
 }
 
 function toKey(r: RustKey): SshKey {
@@ -164,6 +168,7 @@ function toKey(r: RustKey): SshKey {
     fingerprint: r.fingerprint ?? "",
     comment: r.comment ?? "",
     public_key: r.publicKey ?? "",
+    group: r.group ?? "",
   };
 }
 
@@ -175,6 +180,9 @@ function toRustKey(k: SshKey): RustKey {
     passphrase: k.passphrase ?? "",
     hasKey: k.has_key,
     fingerprint: k.fingerprint ?? "",
+    comment: k.comment ?? "",
+    publicKey: k.public_key ?? "",
+    group: k.group ?? "",
   };
 }
 
@@ -223,6 +231,20 @@ export async function reorderSshUnits(kind: "server" | "key" | "script" | "proxy
     return;
   }
   await sshInvoke("ssh_reorder_units", { kind, ids });
+}
+
+/** Deletes a group of one unit kind; its units stay, without a group. */
+export async function ungroupSshUnits(kind: "server" | "key" | "script" | "proxy", group: string): Promise<void> {
+  if (!inTauri) {
+    const strip = <T extends { group?: string }>(list: T[]): T[] =>
+      list.map((x) => (x.group === group ? { ...x, group: "" } : x));
+    if (kind === "server") memory.sshServers = strip(memory.sshServers);
+    else if (kind === "key") memory.sshKeys = strip(memory.sshKeys);
+    else if (kind === "proxy") memory.sshProxies = strip(memory.sshProxies);
+    else memory.sshScripts = strip(memory.sshScripts);
+    return;
+  }
+  await sshInvoke("ssh_ungroup_units", { kind, group });
 }
 
 /** Deletes a unit (disconnects it first; its logs stay). */
@@ -337,6 +359,7 @@ interface RustProxy {
   username: string;
   password?: string;
   hasPassword?: boolean;
+  group?: string;
 }
 
 /** Saved proxies, in the user's order (passwords never included). */
@@ -352,6 +375,7 @@ export async function loadSshProxies(): Promise<SshProxy[]> {
     username: r.username ?? "",
     password: "",
     has_password: !!r.hasPassword,
+    group: r.group ?? "",
   }));
 }
 
@@ -372,6 +396,7 @@ export async function saveSshProxy(proxy: SshProxy): Promise<string> {
       port: proxy.port,
       username: proxy.username,
       password: proxy.password,
+      group: proxy.group ?? "",
     },
   });
 }

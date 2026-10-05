@@ -46,6 +46,7 @@ export function Combobox({
   emptyText = "Nothing found",
   disabled,
   searchable = true,
+  createLabel,
 }: {
   options: ComboboxOption[];
   /** Current option value ("" allowed when an explicit empty option exists). */
@@ -56,6 +57,9 @@ export function Combobox({
   disabled?: boolean;
   /** Show the filter box on top of the list (default true). */
   searchable?: boolean;
+  /** Lets the typed text become a new value: the row shown for it when no
+   *  option has that label (e.g. q => `New group "${q}"`). */
+  createLabel?: (query: string) => string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -67,10 +71,13 @@ export function Combobox({
   const selected = options.find((o) => o.value === value);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const typed = query.trim();
+    const q = typed.toLowerCase();
     if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
-  }, [options, query]);
+    const hits = options.filter((o) => o.label.toLowerCase().includes(q));
+    const exact = options.some((o) => o.label.toLowerCase() === q);
+    return createLabel && !exact ? [...hits, { value: typed, label: createLabel(typed), mark: "+" }] : hits;
+  }, [options, query, createLabel]);
 
   // Reset the filter every time the popup opens; clamp the cursor.
   useEffect(() => {

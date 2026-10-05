@@ -44,11 +44,7 @@ export function SshLogsView() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
-      {logs.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-[var(--text-muted)]">
-          Nothing yet — connect to a unit and the trail starts here.
-        </div>
-      )}
+      {logs.length === 0 && <EmptyLogs />}
 
       <div className="flex flex-col gap-1">
         {days.map((day, i) => {
@@ -92,6 +88,50 @@ export function SshLogsView() {
         })}
       </div>
     </motion.div>
+  );
+}
+
+/** Bar widths of the ghost rows (action, server) — uneven, like real entries. */
+const GHOST_LOGS: [number, number][] = [
+  [11, 34],
+  [9, 26],
+  [13, 40],
+  [10, 30],
+  [12, 22],
+];
+
+/**
+ * No entries yet: the log it will become — a day header and rows drawn as
+ * ghosts fading into the page — with what gets recorded on top.
+ */
+function EmptyLogs() {
+  return (
+    <div className="flex flex-col items-center pt-8">
+      <div className="text-[14px] font-medium text-[var(--text-main)]">No activity yet</div>
+      <div className="mt-1 max-w-[380px] text-center text-[12.5px] leading-relaxed text-[var(--text-dim)]">
+        Every connect, terminal and file transfer is recorded here the moment it happens.
+      </div>
+      <div
+        aria-hidden
+        className="mt-6 flex w-full select-none flex-col gap-0.5"
+        style={{ maskImage: "linear-gradient(to bottom, black 10%, transparent 95%)" }}
+      >
+        <div className="flex h-8 items-center gap-1.5 px-2 text-[var(--text-dim)]">
+          <ChevronRight size={13} strokeWidth={2} className="rotate-90" />
+          <span className="h-2.5 w-14 rounded-full bg-[var(--bg-input)]" />
+        </div>
+        {GHOST_LOGS.map(([action, server], i) => (
+          <div key={i} className="flex items-center gap-2.5 px-3 py-1.5">
+            <span className="h-2 w-10 shrink-0 rounded-full bg-[var(--bg-input)] opacity-70" />
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--bg-input)] text-[var(--text-dim)]">
+              <User size={12} />
+            </span>
+            <span className="h-2.5 shrink-0 rounded-full bg-[var(--bg-input)]" style={{ width: action + "%" }} />
+            <span className="h-2.5 rounded-full bg-[var(--bg-input)]" style={{ width: server + "%" }} />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

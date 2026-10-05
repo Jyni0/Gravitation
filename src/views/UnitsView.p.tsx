@@ -1,4 +1,4 @@
-import { motion, AnimatePresence, Reorder } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Server,
   KeyRound,
@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import * as db from "../core/db.r";
 import type { SshKey, SshProxy, SshScript, SshServer, UnitsTab } from "../core/types.i";
-import { useDragOrder } from "../hooks/useDragOrder.h";
 import { OsLogo, Alert, Spinner, Button } from "../components";
+import { UnitGroups } from "../layout/UnitGroups.c";
 
 /**
  * Units — the SSH Client mode's home page: one grid, three collections.
@@ -70,6 +70,12 @@ export function UnitsView({
     { id: "proxies", label: "Proxies", icon: Waypoints, count: proxies.length },
   ];
   const kind = TAB_KIND[tab];
+  const COUNT: Record<UnitsTab, number> = {
+    servers: servers.length,
+    keys: keys.length,
+    scripts: scripts.length,
+    proxies: proxies.length,
+  };
 
   return (
     <motion.div
@@ -132,8 +138,11 @@ export function UnitsView({
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.12 }}
         >
-          {tab === "servers" && (
+          {COUNT[tab] === 0 && <Empty kind={kind} />}
+
+          {tab === "servers" && COUNT.servers > 0 && (
             <ServerGrid
+              onChanged={onChanged}
               servers={servers}
               connected={connected}
               busyIds={busyIds}
@@ -148,8 +157,9 @@ export function UnitsView({
             />
           )}
 
-          {tab === "keys" && (
+          {tab === "keys" && COUNT.keys > 0 && (
             <KeyGrid
+              onChanged={onChanged}
               keys={keys}
               onReorder={(ids) => onReorder("key", ids)}
               onEdit={(k) => onEditUnit({ kind: "key", id: k.id })}
@@ -160,8 +170,9 @@ export function UnitsView({
             />
           )}
 
-          {tab === "proxies" && (
+          {tab === "proxies" && COUNT.proxies > 0 && (
             <ProxyGrid
+              onChanged={onChanged}
               proxies={proxies}
               servers={servers}
               onReorder={(ids) => onReorder("proxy", ids)}
@@ -173,8 +184,9 @@ export function UnitsView({
             />
           )}
 
-          {tab === "scripts" && (
+          {tab === "scripts" && COUNT.scripts > 0 && (
             <ScriptGrid
+              onChanged={onChanged}
               scripts={scripts}
               onReorder={(ids) => onReorder("script", ids)}
               onEdit={(s) => onEditUnit({ kind: "script", id: s.id })}
@@ -245,51 +257,73 @@ function Avatar({ label, color, icon }: { label: string; color: string; icon?: t
   );
 }
 
-const LIST = "flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)]";
 const LIST_ROW = "group flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-[var(--hover-bg)]";
-const ROW_DIV = "h-px bg-[var(--border-soft)]";
 
-function Empty({ icon: Icon, text }: { icon: typeof Server; text: string }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-[var(--text-muted)]">
-      <Icon size={22} strokeWidth={1.4} className="mx-auto mb-2 text-[var(--text-dim)]" />
-      {text}
-    </div>
-  );
-}
+const EMPTY: Record<UnitKind, { icon: typeof Server; title: string; text: string }> = {
+  server: {
+    icon: Server,
+    title: "No servers yet",
+    text: "Add a host to open terminals on it and browse its files over SFTP.",
+  },
+  key: {
+    icon: KeyRound,
+    title: "No credentials yet",
+    text: "Generate a keypair right here or import a private key — servers sign in with it.",
+  },
+  script: {
+    icon: FileCode2,
+    title: "No scripts yet",
+    text: "Save the commands you run often and paste them into any terminal in one click.",
+  },
+  proxy: {
+    icon: Waypoints,
+    title: "No proxies yet",
+    text: "Add an HTTP or SOCKS5 proxy, then pick it in a server's settings to connect through it.",
+  },
+};
+
+/** Bar widths of the ghost rows (name, subtitle) — uneven, like real names. */
+const GHOST_ROWS: [number, number][] = [
+  [38, 56],
+  [28, 44],
+  [46, 62],
+  [32, 50],
+];
 
 /**
- * A units list in the user's own order: grab any row and drag it up or
- * down. Clicks still work — a drop never counts as a click on the row.
+ * Empty collection: the list it will become, drawn as ghost rows that fade
+ * into the page, with what the list is for on top. Adding is the button in
+ * the header — nothing to click here.
  */
-function DragList<T extends { id: string }>({
-  items,
-  onReorder,
-  children,
-}: {
-  items: T[];
-  onReorder: (ids: string[]) => void;
-  children: (item: T) => React.ReactNode;
-}) {
-  const drag = useDragOrder(items, onReorder);
+function Empty({ kind }: { kind: UnitKind }) {
+  const { icon: Icon, title, text } = EMPTY[kind];
   return (
-    <Reorder.Group axis="y" values={drag.order} onReorder={drag.setOrder} className={LIST} as="div">
-      {drag.order.map((item, i) => (
-        <Reorder.Item
-          key={item.id}
-          value={item}
-          as="div"
-          className="relative select-none bg-[var(--bg-surface)]"
-          onDragStart={drag.onDragStart}
-          onDragEnd={drag.onDragEnd}
-          whileDrag={{ scale: 1.015, boxShadow: "0 8px 24px rgba(0,0,0,0.28)", zIndex: 10 }}
-          onClickCapture={drag.suppressClick}
-        >
-          {i > 0 && <div className={ROW_DIV} />}
-          {children(item)}
-        </Reorder.Item>
-      ))}
-    </Reorder.Group>
+    <div className="flex flex-col items-center pt-8">
+      <div className="text-[14px] font-medium text-[var(--text-main)]">{title}</div>
+      <div className="mt-1 max-w-[380px] text-center text-[12.5px] leading-relaxed text-[var(--text-dim)]">
+        {text} Use <span className="text-[var(--text-muted)]">{ADD_LABEL[kind]}</span> above.
+      </div>
+      <div
+        aria-hidden
+        className="mt-6 flex w-full max-w-[560px] select-none flex-col gap-2"
+        style={{ maskImage: "linear-gradient(to bottom, black 10%, transparent 95%)" }}
+      >
+        {GHOST_ROWS.map(([name, sub], i) => (
+          <div
+            key={i}
+            className="flex items-center gap-3 rounded-2xl border border-dashed border-[var(--border)] px-3.5 py-2.5"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--bg-input)] text-[var(--text-dim)]">
+              <Icon size={15} strokeWidth={1.6} />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <span className="h-2.5 rounded-full bg-[var(--bg-input)]" style={{ width: name + "%" }} />
+              <span className="h-2 rounded-full bg-[var(--bg-input)] opacity-70" style={{ width: sub + "%" }} />
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -299,6 +333,7 @@ function DragList<T extends { id: string }>({
  * appear on hover.
  */
 function ServerGrid({
+  onChanged,
   servers,
   connected,
   busyIds,
@@ -308,6 +343,7 @@ function ServerGrid({
   onEdit,
   onDelete,
 }: {
+  onChanged: () => void;
   servers: SshServer[];
   connected: string[];
   busyIds: string[];
@@ -317,9 +353,8 @@ function ServerGrid({
   onEdit: (s: SshServer) => void;
   onDelete: (s: SshServer) => void;
 }) {
-  if (servers.length === 0) return <Empty icon={Server} text="No servers yet — add your first unit." />;
   return (
-    <DragList items={servers} onReorder={onReorder}>
+    <UnitGroups kind="server" items={servers} variant="page" onReorder={onReorder} onChanged={onChanged}>
       {(s) => {
         const live = connected.includes(s.id);
         const busy = busyIds.includes(s.id);
@@ -378,26 +413,27 @@ function ServerGrid({
             </div>
         );
       }}
-    </DragList>
+    </UnitGroups>
   );
 }
 
 /* ---------- Credentials list ---------- */
 
 function KeyGrid({
+  onChanged,
   keys,
   onReorder,
   onEdit,
   onDelete,
 }: {
+  onChanged: () => void;
   keys: SshKey[];
   onReorder: (ids: string[]) => void;
   onEdit: (k: SshKey) => void;
   onDelete: (k: SshKey) => void;
 }) {
-  if (keys.length === 0) return <Empty icon={KeyRound} text="No credentials yet — add a private key." />;
   return (
-    <DragList items={keys} onReorder={onReorder}>
+    <UnitGroups kind="key" items={keys} variant="page" onReorder={onReorder} onChanged={onChanged}>
       {(k) => (
           <div className={LIST_ROW + " cursor-pointer"} onClick={() => onEdit(k)} title="Edit credential — drag to reorder">
             <Avatar label={k.name} color={avatarColor(k.id)} icon={KeyRound} />
@@ -429,7 +465,7 @@ function KeyGrid({
             </span>
           </div>
       )}
-    </DragList>
+    </UnitGroups>
   );
 }
 
@@ -440,19 +476,20 @@ function KeyGrid({
  * click the script in the sidebar — it is pasted into that terminal.
  */
 function ScriptGrid({
+  onChanged,
   scripts,
   onReorder,
   onEdit,
   onDelete,
 }: {
+  onChanged: () => void;
   scripts: SshScript[];
   onReorder: (ids: string[]) => void;
   onEdit: (s: SshScript) => void;
   onDelete: (s: SshScript) => void;
 }) {
-  if (scripts.length === 0) return <Empty icon={FileCode2} text="No scripts yet — save a command you run often." />;
   return (
-    <DragList items={scripts} onReorder={onReorder}>
+    <UnitGroups kind="script" items={scripts} variant="page" onReorder={onReorder} onChanged={onChanged}>
       {(s) => (
           <div className={LIST_ROW + " cursor-pointer"} onClick={() => onEdit(s)} title="Edit script — drag to reorder">
             <Avatar label={s.name} color={avatarColor(s.id)} icon={FileCode2} />
@@ -482,7 +519,7 @@ function ScriptGrid({
             </span>
           </div>
       )}
-    </DragList>
+    </UnitGroups>
   );
 }
 
@@ -490,22 +527,22 @@ function ScriptGrid({
 
 /** Saved proxies (HTTP / SOCKS5). A server picks one in its settings. */
 function ProxyGrid({
+  onChanged,
   proxies,
   servers,
   onReorder,
   onEdit,
   onDelete,
 }: {
+  onChanged: () => void;
   proxies: SshProxy[];
   servers: SshServer[];
   onReorder: (ids: string[]) => void;
   onEdit: (p: SshProxy) => void;
   onDelete: (p: SshProxy) => void;
 }) {
-  if (proxies.length === 0)
-    return <Empty icon={Waypoints} text="No proxies yet — add an HTTP or SOCKS5 proxy, then pick it in a server's settings." />;
   return (
-    <DragList items={proxies} onReorder={onReorder}>
+    <UnitGroups kind="proxy" items={proxies} variant="page" onReorder={onReorder} onChanged={onChanged}>
       {(p) => {
         const users = servers.filter((s) => s.proxy_id === p.id).length;
         return (
@@ -545,6 +582,6 @@ function ProxyGrid({
           </div>
         );
       }}
-    </DragList>
+    </UnitGroups>
   );
 }

@@ -31,6 +31,9 @@ pub struct SshProxy {
     pub password: String,
     #[serde(default)]
     pub has_password: bool,
+    /// Group the unit is filed under ("" = none).
+    #[serde(default)]
+    pub group: String,
 }
 
 fn validate(p: &SshProxy) -> Result<(), String> {
@@ -66,13 +69,14 @@ fn from_row(r: &sqlx::sqlite::SqliteRow, with_secret: bool) -> SshProxy {
         username: r.try_get("username").unwrap_or_default(),
         password: if with_secret { vault::decrypt(&stored) } else { String::new() },
         has_password: !stored.is_empty(),
+        group: r.try_get("group_name").unwrap_or_default(),
     }
 }
 
 pub async fn list(app: &AppHandle) -> Result<Vec<SshProxy>, String> {
     let pool = sql(app).await.ok_or("database unavailable")?;
     let rows = sqlx::query(
-        "SELECT id, name, kind, host, port, username, password FROM ssh_proxies ORDER BY sort_order ASC, created_at DESC",
+        "SELECT id, name, kind, host, port, username, password, group_name FROM ssh_proxies ORDER BY sort_order ASC, created_at DESC",
     )
     .fetch_all(&pool)
     .await
@@ -114,8 +118,8 @@ pub async fn save(app: &AppHandle, p: &SshProxy) -> Result<String, String> {
         plain => vault::encrypt(plain),
     };
     sqlx::query(
-        "INSERT INTO ssh_proxies (id, name, kind, host, port, username, password) VALUES ($1,$2,$3,$4,$5,$6,$7) \
-         ON CONFLICT(id) DO UPDATE SET name=$2, kind=$3, host=$4, port=$5, username=$6, password=$7",
+        "INSERT INTO ssh_proxies (id, name, kind, host, port, username, password, group_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) \
+         ON CONFLICT(id) DO UPDATE SET name=$2, kind=$3, host=$4, port=$5, username=$6, password=$7, group_name=$8",
     )
     .bind(&id)
     .bind(p.name.trim())
@@ -124,6 +128,7 @@ pub async fn save(app: &AppHandle, p: &SshProxy) -> Result<String, String> {
     .bind(p.port as i64)
     .bind(p.username.trim())
     .bind(&password)
+    .bind(p.group.trim())
     .execute(&pool)
     .await
     .map_err(|e| format!("cannot save proxy: {e}"))?;
@@ -318,6 +323,7 @@ mod tests {
             username: user.into(),
             password: pass.into(),
             has_password: false,
+            group: String::new(),
         }
     }
 

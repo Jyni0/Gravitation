@@ -18,7 +18,8 @@ const DB_FILE: &str = "gravitation.db";
 /// migration when one of them no longer matches. Schema changes always go in
 /// a new version at the end.
 pub fn migrations() -> Vec<Migration> {
-    vec![Migration {
+    vec![
+        Migration {
         version: 1,
         description: "ssh client schema",
         // Secret columns (password, private_key, passphrase) hold AES-256-GCM
@@ -94,7 +95,21 @@ pub fn migrations() -> Vec<Migration> {
             CREATE INDEX IF NOT EXISTS idx_ssh_logs_time ON ssh_logs(created_at);
         ",
         kind: MigrationKind::Up,
-    }]
+        },
+        Migration {
+            version: 2,
+            description: "unit groups",
+            // A unit's group ("" = none) — the sidebar and the Units page
+            // gather units of one group under a collapsible header.
+            sql: "
+                ALTER TABLE ssh_servers ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
+                ALTER TABLE ssh_keys    ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
+                ALTER TABLE ssh_scripts ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
+                ALTER TABLE ssh_proxies ADD COLUMN group_name TEXT NOT NULL DEFAULT '';
+            ",
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 /// Absolute path of the database file, resolved from the app data directory.

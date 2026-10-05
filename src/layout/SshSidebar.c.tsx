@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { SshConn, SshKey, SshScript, SshServer, UnitsTab, ViewKind } from "../core/types.i";
 import { leaves, type ConnGroup } from "./splitLayout.u";
+import { UnitGroups } from "./UnitGroups.c";
 import { useDragOrder } from "../hooks/useDragOrder.h";
 import { ROW_ICON, ScrollArea, OsLogo, NavItem, RowActions } from "../components";
 
@@ -52,6 +53,7 @@ export function SshSidebar({
   onShowView,
   onAdd,
   onOpenSettings,
+  onUnitsChanged,
   onDragConn,
   onDropConn,
 }: {
@@ -85,6 +87,8 @@ export function SshSidebar({
   onShowView: (v: "units" | "ssh-logs") => void;
   onAdd: (tab: UnitsTab) => void;
   onOpenSettings: () => void;
+  /** Units changed from the sidebar (a group was deleted) — reload them. */
+  onUnitsChanged: () => void;
   /** A Connections row is being dragged (pointer in viewport px)… */
   onDragConn: (connId: string, x: number, y: number) => void;
   /** …and was let go there — over a pane it lands in the split view. */
@@ -263,7 +267,7 @@ export function SshSidebar({
           {sectionHeader("servers", "Servers", servers.length, "servers", "Add server")}
           {sectionBody(
             "servers",
-            <SideDragList items={servers} onReorder={(ids) => onReorder("server", ids)} onHover={(id) => setHovered(id && "srv-" + id)}>
+            <UnitGroups kind="server" items={servers} variant="sidebar" onChanged={onUnitsChanged} onReorder={(ids) => onReorder("server", ids)} onHover={(id) => setHovered(id && "srv-" + id)}>
             {(s) => {
               const live = connected.includes(s.id);
               const panelActive = activePanel?.kind === "server" && activePanel.id === s.id;
@@ -318,14 +322,14 @@ export function SshSidebar({
                 </>
               );
             }}
-            </SideDragList>
+            </UnitGroups>
           )}
 
           {/* ---- Credentials ---- */}
           {sectionHeader("keys", "Credentials", keys.length, "keys", "Add credential")}
           {sectionBody(
             "keys",
-            <SideDragList items={keys} onReorder={(ids) => onReorder("key", ids)}>
+            <UnitGroups kind="key" items={keys} variant="sidebar" onChanged={onUnitsChanged} onReorder={(ids) => onReorder("key", ids)}>
             {(k) => {
               const active = activePanel?.kind === "key" && activePanel.id === k.id;
               return (
@@ -343,14 +347,14 @@ export function SshSidebar({
                 </NavItem>
               );
             }}
-            </SideDragList>
+            </UnitGroups>
           )}
 
           {/* ---- Scripts ---- */}
           {sectionHeader("scripts", "Scripts", scripts.length, "scripts", "Add script")}
           {sectionBody(
             "scripts",
-            <SideDragList items={scripts} onReorder={(ids) => onReorder("script", ids)} onHover={(id) => setHovered(id && "script:" + id)}>
+            <UnitGroups kind="script" items={scripts} variant="sidebar" onChanged={onUnitsChanged} onReorder={(ids) => onReorder("script", ids)} onHover={(id) => setHovered(id && "script:" + id)}>
             {(s) => {
               const active = activePanel?.kind === "script" && activePanel.id === s.id;
               const rowKey = "script:" + s.id;
@@ -383,7 +387,7 @@ export function SshSidebar({
                 </>
               );
             }}
-            </SideDragList>
+            </UnitGroups>
           )}
 
           <div className="h-2 shrink-0" />

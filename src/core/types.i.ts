@@ -76,6 +76,8 @@ export interface SshServer {
   os?: string;
   /** ssh_proxies row id to tunnel through ("" = direct connection). */
   proxy_id?: string;
+  /** Group the unit is filed under ("" = none). */
+  group?: string;
 }
 
 /** A saved proxy a server can connect through (password encrypted at rest). */
@@ -89,6 +91,8 @@ export interface SshProxy {
   /** Plaintext only when saving ("" keeps the stored one, "-" clears it); blank in listings. */
   password: string;
   has_password: boolean;
+  /** Group the unit is filed under ("" = none). */
+  group?: string;
 }
 
 /** A reusable private-key credential (secrets encrypted at rest). */
@@ -107,6 +111,8 @@ export interface SshKey {
   comment?: string;
   /** Public half (authorized_keys form) — safe to show/copy. */
   public_key?: string;
+  /** Group the unit is filed under ("" = none). */
+  group?: string;
 }
 
 /** Detected server OS tokens → logo files in /icons/os ("" = no logo). */
@@ -127,6 +133,8 @@ export interface SshScript {
   name: string;
   description: string;
   content: string;
+  /** Group the unit is filed under ("" = none). */
+  group?: string;
 }
 
 /**
