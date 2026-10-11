@@ -40,6 +40,34 @@ type OpenFile = {
 
 const joinRemote = (dir: string, name: string) => (dir.endsWith("/") ? dir : dir + "/") + name;
 
+/** Last opened folder per server, so a new Files tab starts where the previous one was. */
+const cwdKey = (serverId: string) => "dsh:files-cwd:" + serverId;
+const readSavedCwd = (serverId: string): string | null => {
+  try {
+    return localStorage.getItem(cwdKey(serverId));
+  } catch {
+    return null;
+  }
+};
+const saveCwd = (serverId: string, path: string) => {
+  try {
+    localStorage.setItem(cwdKey(serverId), path);
+  } catch {
+    /* storage unavailable — just don't remember */
+  }
+};
+
+/** Collapse "." / ".." / repeated slashes of an absolute remote path. */
+function normalizeRemote(path: string): string {
+  const out: string[] = [];
+  for (const seg of path.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return "/" + out.join("/");
+}
+
 /** Minimal slice of the (non-standard, but WebView2/WebKit-supported) FileSystem entry API. */
 type FsEntry = {
   isFile: boolean;
@@ -105,15 +133,22 @@ export function FilesView({
   const [query, setQuery] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  /** Typed path in the toolbar; null = breadcrumbs shown. */
+  const [pathDraft, setPathDraft] = useState<string | null>(null);
 
+  /** Opens a folder; false if it couldn't be listed (the error is shown). */
   const load = useCallback(
-    async (path: string) => {
-      if (busyRef.current) return;
+    async (path: string): Promise<boolean> => {
+      if (busyRef.current) return false;
       busyRef.current = true;
       setLoading(true);
       setError(null);
       try {
-        const target = path === "~" ? await db.sftpHome(server.id) : path;
+        let target = path;
+        if (path === "~" || path.startsWith("~/")) {
+          const home = await db.sftpHome(server.id);
+          target = path === "~" ? home : normalizeRemote(joinRemote(home, path.slice(2)));
+        }
         const list = await db.sftpList(server.id, target);
         // A new folder starts with no selection and no filter.
         if (cwdRef.current !== target) {
@@ -124,8 +159,11 @@ export function FilesView({
         cwdRef.current = target;
         setCwd(target);
         setEntries(list);
+        saveCwd(server.id, target);
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return false;
       } finally {
         setLoading(false);
         busyRef.current = false;
@@ -135,8 +173,24 @@ export function FilesView({
   );
 
   useEffect(() => {
-    void load("~");
-  }, [load]);
+    // Reopen the last folder of this server; if it's gone, fall back to home.
+    const saved = readSavedCwd(server.id);
+    void (async () => {
+      if (saved && saved !== "~" && (await load(saved))) return;
+      await load("~");
+    })();
+  }, [load, server.id]);
+
+  /** Go to the path typed in the toolbar: absolute, ~/…, or relative to the current folder. */
+  const commitPath = async () => {
+    const raw = (pathDraft ?? "").trim();
+    if (!raw) return setPathDraft(null);
+    const target = raw === "~" || raw.startsWith("~/") ? raw : normalizeRemote(raw.startsWith("/") ? raw : joinRemote(cwd, raw));
+    if (await load(target)) {
+      setPathDraft(null);
+      listRef.current?.focus();
+    }
+  };
 
   useEffect(() => {
     let off: (() => void) | undefined;
@@ -498,6 +552,9 @@ export function FilesView({
         e.preventDefault();
         setQuery((q) => q ?? "");
         requestAnimationFrame(() => searchRef.current?.select());
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && shortcutKey(e) === "L") {
+        e.preventDefault();
+        setPathDraft(cwdRef.current);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -569,10 +626,30 @@ export function FilesView({
         >
           <Home size={12} />
         </button>
+        {pathDraft !== null ? (
+          <input
+            autoFocus
+            spellCheck={false}
+            className="h-6 min-w-0 flex-1 rounded-md border border-[var(--accent)] bg-[var(--bg-input)] px-1.5 font-mono text-[11.5px] text-[var(--text-main)] outline-none"
+            value={pathDraft}
+            placeholder="/path/to/folder or ~/folder"
+            onChange={(ev) => setPathDraft(ev.target.value)}
+            onFocus={(ev) => ev.target.select()}
+            onKeyDown={(ev) => {
+              ev.stopPropagation();
+              if (ev.key === "Enter") void commitPath();
+              if (ev.key === "Escape") {
+                setPathDraft(null);
+                listRef.current?.focus();
+              }
+            }}
+            onBlur={() => setPathDraft(null)}
+          />
+        ) : (
         <OverlayScroll
           wheelX
-          wrapperClassName="min-w-0 flex-1"
-          className="flex items-center gap-0.5 overflow-x-auto"
+          wrapperClassName="min-w-0 flex-1 h-full"
+          className="flex h-full items-center gap-0.5 overflow-x-auto"
         >
           {crumbs.map((c, i) => {
             const last = i === crumbs.length - 1;
@@ -588,7 +665,14 @@ export function FilesView({
               </span>
             );
           })}
+          {/* Empty rest of the bar: click to type a path (also Ctrl+L). */}
+          <span
+            className="h-full min-w-6 flex-1 cursor-text"
+            title="Type a path (Ctrl+L)"
+            onClick={() => setPathDraft(cwd)}
+          />
         </OverlayScroll>
+        )}
         <span className="flex shrink-0 items-center gap-1">
           {!file &&
             (query !== null ? (
