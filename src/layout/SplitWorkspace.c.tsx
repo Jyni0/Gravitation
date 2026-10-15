@@ -46,6 +46,7 @@ export function SplitWorkspace({
   onClose,
   onSession,
   onOpenConn,
+  onEditServer,
 }: {
   layout: Layout;
   conns: SshConn[];
@@ -63,6 +64,8 @@ export function SplitWorkspace({
   onClose: (connId: string) => void;
   onSession: (connId: string, sessionId: string | null) => void;
   onOpenConn: (serverId: string, kind: "terminal" | "sftp") => void;
+  /** Opens a server's settings in the right-hand panel. */
+  onEditServer: (serverId: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const drag = usePaneDrag();
@@ -144,11 +147,14 @@ export function SplitWorkspace({
                   connId={conn.id}
                   onSession={(sid) => onSession(conn.id, sid)}
                   onOpenFiles={() => onOpenConn(server.id, "sftp")}
+                  onEditServer={() => onEditServer(server.id)}
                   onClose={() => onClose(conn.id)}
                 />
               ) : (
                 <FilesView
                   server={server}
+                  connId={conn.id}
+                  active={activeConn === connId}
                   onOpenTerminal={() => onOpenConn(server.id, "terminal")}
                   onClose={() => onClose(conn.id)}
                 />

@@ -2058,7 +2058,7 @@ dependencies = [
 
 [[package]]
 name = "gravitation"
-version = "5.9.0"
+version = "6.5.0"
 dependencies = [
  "aes-gcm",
  "argon2",

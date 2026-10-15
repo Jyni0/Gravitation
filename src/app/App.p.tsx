@@ -10,6 +10,7 @@ import { SshSidebar } from "../layout/SshSidebar.c";
 import { UnitsView } from "../views/UnitsView.p";
 import { SshLogsView } from "../views/SshLogsView.p";
 import { forgetConnSession, pasteIntoConn } from "../views/TerminalView.p";
+import { forgetFilesPane } from "../views/FilesView.p";
 import { SplitWorkspace } from "../layout/SplitWorkspace.c";
 import { dropConn, leaf, leaves, paneDrag, dropTarget, removeConn, setRatio } from "../layout/splitLayout.u";
 import type { ConnGroup, DropZone, NodePath } from "../layout/splitLayout.u";
@@ -69,9 +70,6 @@ export default function App() {
   /** Saved proxies — Units page only (not in the sidebar). */
   const [sshProxies, setSshProxies] = useState<SshProxy[]>([]);
   const [sshScripts, setSshScripts] = useState<SshScript[]>([]);
-  const [sshConnectedIds, setSshConnectedIds] = useState<string[]>([]);
-  const [sshBusyIds, setSshBusyIds] = useState<string[]>([]);
-  const [sshNotice, setSshNotice] = useState<string | null>(null);
   /** True when the vault master key is safely persisted (OS keyring/file). */
   const [sshVaultBacked, setSshVaultBacked] = useState(true);
   /** Which Units collection the switcher shows. */
@@ -155,7 +153,6 @@ export default function App() {
     void db.loadSshKeys().then(setSshKeys).catch(() => {});
     void db.loadSshProxies().then(setSshProxies).catch(() => {});
     void db.loadSshScripts().then(setSshScripts).catch(() => {});
-    void db.sshConnected().then(setSshConnectedIds).catch(() => {});
     void db.sshVaultBacked().then(setSshVaultBacked).catch(() => {});
   }, []);
 
@@ -166,7 +163,6 @@ export default function App() {
     let off: (() => void) | undefined;
     void db
       .onSshEvent({
-        onStatus: (ids) => setSshConnectedIds(ids),
         onLogged: () => {},
         // A connect just detected the remote OS — patch the row in place so
         // the logo appears without a full reload.
@@ -350,6 +346,7 @@ export default function App() {
     for (const c of dying) {
       if (c.sessionId) void db.sshShellClose(c.sessionId).catch(() => {});
       forgetConnSession(c.id);
+      forgetFilesPane(c.id);
     }
     const next = sshConnsRef.current.filter((x) => !ids.includes(x.id));
     sshConnsRef.current = next;
@@ -397,6 +394,7 @@ export default function App() {
       for (const c of gone) {
         if (c.sessionId) void db.sshShellClose(c.sessionId).catch(() => {});
         forgetConnSession(c.id);
+        forgetFilesPane(c.id);
       }
       sshConnsRef.current = alive;
       dropConnsFromGroups(gone.map((c) => c.id));
@@ -404,19 +402,6 @@ export default function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sshServers]);
-
-  const setSshBusy = (id: string, busy: boolean) =>
-    setSshBusyIds((prev) => (busy ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
-
-  const connectServer = useCallback((id: string) => {
-    setSshBusy(id, true);
-    setSshNotice(null);
-    db.sshConnect(id)
-      .then(() => db.sshConnected())
-      .then(setSshConnectedIds)
-      .catch((e) => setSshNotice(e instanceof Error ? e.message : String(e)))
-      .finally(() => setSshBusy(id, false));
-  }, []);
 
   /** "New …" from the sidebar or the File menu: the Units page + an empty form. */
   const addUnit = useCallback((tab: UnitsTab) => {
@@ -537,7 +522,6 @@ export default function App() {
             conns={sshConns}
             groups={groups}
             activeGroup={view === "ssh-session" ? activeGroup : null}
-            connected={sshConnectedIds}
             view={view}
             activePanel={sshPanel}
             onOpenConn={openSshConn}
@@ -576,16 +560,12 @@ export default function App() {
                   keys={sshKeys}
                   scripts={sshScripts}
                   proxies={sshProxies}
-                  connected={sshConnectedIds}
-                  busyIds={sshBusyIds}
-                  notice={sshNotice}
                   vaultBacked={sshVaultBacked}
                   tab={unitsTab}
                   onTab={setUnitsTab}
                   onChanged={reloadSshServers}
                   onEditUnit={(t) => setSshPanel(t)}
                   onAddUnit={(kind) => setSshPanel({ kind })}
-                  onConnect={connectServer}
                   onOpenTerminal={(id) => openSshConn(id, "terminal", true)}
                   onReorder={reorderSsh}
                 />
@@ -622,6 +602,7 @@ export default function App() {
                     setSshConns((prev) => prev.map((c) => (c.id === connId ? { ...c, sessionId: sid ?? undefined } : c)))
                   }
                   onOpenConn={(serverId, kind) => openSshConn(serverId, kind, true)}
+                  onEditServer={(id) => setSshPanel({ kind: "server", id })}
                 />
               );
             })()}

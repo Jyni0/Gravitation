@@ -15,7 +15,8 @@ import { ROW_ICON } from "../components";
  * group). `children` draws one row.
  *
  * `variant`: "sidebar" = plain rows under quiet labels; "page" = the Units
- * page cards under small-caps headers.
+ * page cards under small-caps headers. On the page, units without a group
+ * that sit next to each other share one card, like a group's rows do.
  */
 export function UnitGroups<T extends { id: string; group?: string }>({
   kind,
@@ -58,14 +59,19 @@ export function UnitGroups<T extends { id: string; group?: string }>({
       values={drag.order}
       onReorder={drag.setOrder}
       as="div"
-      className={side ? "flex flex-col gap-0.5" : "flex flex-col gap-3"}
+      className={side ? "flex flex-col gap-0.5" : "flex flex-col"}
     >
-      {drag.order.map((e) => {
+      {drag.order.map((e, i) => {
         const g = e.group;
+        const prev = drag.order[i - 1];
+        const next = drag.order[i + 1];
+        // Page: the gap between blocks; loose units next to each other join.
+        const gap = !side && i > 0 && !(e.unit && prev?.unit) ? "mt-3 " : "";
         if (g) {
           return (
             <GroupItem
               key={e.id}
+              className={gap}
               entry={e}
               group={g}
               side={side}
@@ -81,12 +87,21 @@ export function UnitGroups<T extends { id: string; group?: string }>({
           );
         }
         const unit = e.unit as T;
+        const first = !prev?.unit;
+        const last = !next?.unit;
         return (
           <Reorder.Item
             key={e.id}
             value={e}
             as="div"
-            className={side ? "relative shrink-0 select-none rounded-xl" : cardClass + " relative select-none"}
+            className={
+              side
+                ? "relative shrink-0 select-none rounded-xl"
+                : gap +
+                  "relative select-none overflow-hidden border-x border-[var(--border)] bg-[var(--bg-surface)] " +
+                  (first ? "rounded-t-2xl border-t " : "") +
+                  (last ? "rounded-b-2xl border-b" : "")
+            }
             onDragStart={drag.onDragStart}
             onDragEnd={drag.onDragEnd}
             onClickCapture={drag.suppressClick}
@@ -94,6 +109,7 @@ export function UnitGroups<T extends { id: string; group?: string }>({
             onMouseEnter={() => onHover?.(unit.id)}
             onMouseLeave={() => onHover?.(null)}
           >
+            {!side && !first && <div className="h-px bg-[var(--border-soft)]" />}
             {children(unit)}
           </Reorder.Item>
         );
@@ -152,6 +168,7 @@ function RowList<T extends { id: string }>({
 
 /** One group: a header that drags the whole group, then its rows. */
 function GroupItem<T>({
+  className = "",
   entry,
   group,
   side,
@@ -161,6 +178,8 @@ function GroupItem<T>({
   drag,
   children,
 }: {
+  /** Spacing from the block above (page). */
+  className?: string;
   entry: LayoutEntry<T>;
   group: { name: string; items: T[] };
   side: boolean;
@@ -176,7 +195,7 @@ function GroupItem<T>({
     <Reorder.Item
       value={entry}
       as="div"
-      className={"relative flex flex-col rounded-xl" + (side ? "" : " mt-1")}
+      className={className + "relative flex flex-col rounded-xl" + (side ? "" : " pt-1")}
       dragListener={false}
       dragControls={controls}
       onDragStart={drag.onDragStart}

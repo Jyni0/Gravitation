@@ -507,8 +507,10 @@ export async function sshShellOpen(
   cols: number,
   rows: number,
   term?: string,
+  /** Connection tab id: its connecting screen gets ssh://connect-step events. */
+  tag?: string,
 ): Promise<string> {
-  return sshInvoke<string>("ssh_shell_open", { serverId, cols, rows, term: term ?? null });
+  return sshInvoke<string>("ssh_shell_open", { serverId, cols, rows, term: term ?? null, tag: tag ?? null });
 }
 
 /** Feeds typed bytes to the PTY. Accepts a string or raw bytes. */
@@ -576,8 +578,9 @@ export async function sftpDownload(
   serverId: string,
   remote: string,
   local: string,
+  tag?: string,
 ): Promise<number> {
-  return sshInvoke<number>("ssh_sftp_download", { serverId, remote, local });
+  return sshInvoke<number>("ssh_sftp_download", { serverId, remote, local, tag: tag ?? null });
 }
 
 /** Uploads a local file to a remote path; returns bytes written. */
@@ -585,8 +588,9 @@ export async function sftpUpload(
   serverId: string,
   local: string,
   remote: string,
+  tag?: string,
 ): Promise<number> {
-  return sshInvoke<number>("ssh_sftp_upload", { serverId, local, remote });
+  return sshInvoke<number>("ssh_sftp_upload", { serverId, local, remote, tag: tag ?? null });
 }
 
 /** Reads a small text file for the preview pane (capped at 2 MB). */
@@ -607,7 +611,7 @@ const UPLOAD_CHUNK = 4 * 1024 * 1024;
  * sees its bytes, not a local path) in chunks; progress arrives as
  * ssh://transfer events like any other upload.
  */
-export async function sftpUploadBlob(serverId: string, remote: string, blob: Blob): Promise<void> {
+export async function sftpUploadBlob(serverId: string, remote: string, blob: Blob, tag?: string): Promise<void> {
   if (!inTauri) throw new Error("SSH needs the desktop shell (npm run tauri:dev)");
   const { invoke } = await import("@tauri-apps/api/core");
   const total = blob.size;
@@ -620,6 +624,7 @@ export async function sftpUploadBlob(serverId: string, remote: string, blob: Blo
         "x-remote": encodeURIComponent(remote),
         "x-offset": String(offset),
         "x-total": String(total),
+        ...(tag ? { "x-tag": tag } : {}),
       },
     });
     offset += part.length;
@@ -644,13 +649,23 @@ export async function sshVaultBacked(): Promise<boolean> {
   return sshInvoke<boolean>("ssh_vault_status");
 }
 
-/** Transfer progress: {serverId, file, done, total, finished}. */
+/** Transfer progress: {serverId, tag, file, done, total, finished}. */
 export interface SshTransferProgress {
   serverId: string;
+  /** Caller's id passed to the upload/download (one per Files pane). */
+  tag: string | null;
   file: string;
   done: number;
   total: number;
   finished: boolean;
+}
+
+/** One step of opening a terminal connection (see ConnectScreen). */
+export type SshConnectStepId = "proxy" | "dial" | "hostkey" | "auth" | "shell";
+export interface SshConnectStep {
+  tag: string;
+  step: SshConnectStepId;
+  detail: string;
 }
 
 /**
@@ -661,7 +676,8 @@ export interface SshTransferProgress {
  * * onShellData— PTY output, base64 (`ssh://shell-data`);
  * * onShellExit— a shell ended (`ssh://shell-exit`);
  * * onTransfer — SFTP progress (`ssh://transfer`);
- * * onOs       — a server's OS was detected (`ssh://os`), [serverId, token].
+ * * onOs       — a server's OS was detected (`ssh://os`), [serverId, token];
+ * * onConnectStep — a terminal tab's connection reached a step (`ssh://connect-step`).
  */
 export async function onSshEvent(handlers: {
   onStatus?: (connectedIds: string[]) => void;
@@ -670,6 +686,7 @@ export async function onSshEvent(handlers: {
   onShellExit?: (payload: { sessionId: string; code: number | null }) => void;
   onTransfer?: (progress: SshTransferProgress) => void;
   onOs?: (payload: [string, string]) => void;
+  onConnectStep?: (payload: SshConnectStep) => void;
 }): Promise<() => void> {
   if (!inTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
@@ -684,6 +701,7 @@ export async function onSshEvent(handlers: {
     ),
     listen<SshTransferProgress>("ssh://transfer", (e) => handlers.onTransfer?.(e.payload)),
     listen<[string, string]>("ssh://os", (e) => handlers.onOs?.(e.payload)),
+    listen<SshConnectStep>("ssh://connect-step", (e) => handlers.onConnectStep?.(e.payload)),
   ]);
   return () => offs.forEach((off) => off());
 }

@@ -1,6 +1,6 @@
 [package]
 name = "gravitation"
-version = "6.2.0"
+version = "6.5.0"
 description = "Gravitation — SSH client: terminals, SFTP, keys, scripts and proxies"
 authors = ["Gravitation"]
 edition = "2021"

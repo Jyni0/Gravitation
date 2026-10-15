@@ -704,3 +704,40 @@ textarea, input, [contenteditable="true"] { user-select: text; -webkit-user-sele
 .range-theme:focus-visible::-webkit-slider-thumb {
   transform: scale(1.15);
 }
+
+/* ---------- Text shimmer (connecting screen) ---------- */
+
+/* A band of light running through text (the step in progress). */
+.text-shimmer {
+  background: linear-gradient(
+      90deg,
+      var(--text-muted) 0%,
+      var(--text-muted) 35%,
+      var(--text-main) 50%,
+      var(--text-muted) 65%,
+      var(--text-muted) 100%
+    )
+    0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 1.8s linear infinite;
+}
+@keyframes text-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    animation: none;
+  }
+  .text-shimmer {
+    color: var(--text-main);
+    background: none;
+  }
+}

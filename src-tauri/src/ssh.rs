@@ -4,13 +4,13 @@
 //! commands below; this module owns everything live:
 //!
 //! * `connect`    — TCP + password/private-key auth via russh, pooled by
-//!                  server id so the units page, terminals and SFTP share
-//!                  one session per server;
+//!   server id so the units page, terminals and SFTP share
+//!   one session per server;
 //! * shell (PTY)  — interactive terminal sessions for the console page:
-//!                  open/input/resize/close, output streamed by events,
-//!                  ring buffer for late attachers;
+//!   open/input/resize/close, output streamed by events,
+//!   ring buffer for late attachers;
 //! * SFTP         — browsing, up/download, rename/remove over the same
-//!                  pooled connection (Termius-style file transfer);
+//!   pooled connection (Termius-style file transfer);
 //! * `disconnect` — close and forget a pooled connection (and its shells);
 //! * every attempt is written to `ssh_logs` — the audit
 //!   trail the Logs page renders.
@@ -163,6 +163,38 @@ struct ClientHandler {
     expected: String,
     /// Fingerprint the server actually presented.
     seen: Arc<Mutex<String>>,
+    /// Who to tell about connection steps (a terminal tab's connecting screen).
+    steps: Steps,
+}
+
+/// One step of opening a connection, for the tab's connecting screen.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectStep {
+    /// Caller's id (the connection tab) — only that tab shows it.
+    tag: String,
+    /// proxy | dial | hostkey | auth | shell
+    step: &'static str,
+    /// Human detail, e.g. "user@host:22" or the host-key fingerprint.
+    detail: String,
+}
+
+/// Emits ConnectStep events when a caller asked for them (tag set).
+#[derive(Clone)]
+struct Steps(Option<(AppHandle, String)>);
+
+impl Steps {
+    fn none() -> Self {
+        Steps(None)
+    }
+    fn emit(&self, step: &'static str, detail: impl Into<String>) {
+        if let Some((app, tag)) = &self.0 {
+            let _ = app.emit(
+                "ssh://connect-step",
+                ConnectStep { tag: tag.clone(), step, detail: detail.into() },
+            );
+        }
+    }
 }
 
 impl russh::client::Handler for ClientHandler {
@@ -179,6 +211,10 @@ impl russh::client::Handler for ClientHandler {
         if let Ok(mut seen) = self.seen.lock() {
             *seen = fp.clone();
         }
+        self.steps.emit(
+            "hostkey",
+            if self.expected.is_empty() { format!("new host, trusting {fp}") } else { fp.clone() },
+        );
         Ok(self.expected.is_empty() || self.expected == fp)
     }
 }
@@ -442,18 +478,34 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const EXEC_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_OUTPUT: usize = 30_000;
 
+/// One lock per server: two panes asking at once share one dial instead of
+/// both connecting and the second silently replacing the first.
+static CONNECTING: Mutex<Option<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = Mutex::new(None);
+
+fn connect_lock(server_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut guard = CONNECTING.lock().unwrap_or_else(|e| e.into_inner());
+    Arc::clone(
+        guard
+            .get_or_insert_with(HashMap::new)
+            .entry(server_id.to_string())
+            .or_default(),
+    )
+}
+
 /// Opens (or reuses) the shared connection (exec / SFTP) to a saved server.
 pub async fn connect(app: &AppHandle, actor: &str, server_id: &str) -> Result<(), String> {
+    let lock = connect_lock(server_id);
+    let _held = lock.lock().await;
     let server = load_server(app, server_id).await?;
     let route = route_of(app, &server).await;
     if let Some(conn) = pool_get(server_id) {
-        if conn.route == route {
+        if conn.route == route && !conn.handle.is_closed() {
             return Ok(()); // already connected — idempotent
         }
-        // Host / user / proxy changed since this connection opened: retire
-        // only the shared connection (and its SFTP) so new work takes the
-        // new route. Open terminals have their own connections and keep
-        // running untouched.
+        // Host / user / proxy changed since this connection opened, or the
+        // connection died (network drop, sleep, server reboot): retire only
+        // the shared connection (and its SFTP) so new work gets a fresh one.
+        // Open terminals have their own connections and keep running untouched.
         if let Some(old) = pool_take(server_id) {
             if let Some(map) = SFTP.lock().await.as_mut() {
                 map.remove(server_id);
@@ -485,7 +537,7 @@ async fn route_of(app: &AppHandle, s: &SshServer) -> String {
 }
 
 async fn connect_inner(app: &AppHandle, server: &SshServer, route: String) -> Result<(), String> {
-    let handle = open_session(app, server).await?;
+    let handle = open_session(app, server, Steps::none()).await?;
     // Detect the remote OS once per connection (best-effort, never fatal):
     // the result drives the server logo in the UI and is cached on the row.
     let os = detect_os(&handle).await;
@@ -508,7 +560,7 @@ async fn connect_inner(app: &AppHandle, server: &SshServer, route: String) -> Re
 
 /// Dials (directly or through the server's proxy), authenticates and pins
 /// the host key — one brand-new SSH connection with the CURRENT settings.
-async fn open_session(app: &AppHandle, server: &SshServer) -> Result<Conn, String> {
+async fn open_session(app: &AppHandle, server: &SshServer, steps: Steps) -> Result<Conn, String> {
     let config = Arc::new(client::Config {
         keepalive_interval: Some(Duration::from_secs(30)),
         keepalive_max: 3,
@@ -518,18 +570,22 @@ async fn open_session(app: &AppHandle, server: &SshServer) -> Result<Conn, Strin
     let handler = ClientHandler {
         expected: server.host_key.clone(),
         seen: seen.clone(),
+        steps: steps.clone(),
     };
     // Proxies (Tor especially) need extra time to build the circuit.
     let limit = if server.proxy_id.is_empty() { CONNECT_TIMEOUT } else { CONNECT_TIMEOUT * 3 };
     let session = tokio::time::timeout(limit, async {
         if server.proxy_id.is_empty() {
+            steps.emit("dial", format!("{}:{}", server.host, server.port));
             return client::connect(config, (server.host.as_str(), server.port), handler)
                 .await
                 .map_err(|e| format!("ssh handshake failed: {e}"));
         }
         // Tunnel through the linked proxy, then run SSH over that stream.
         let proxy = crate::proxy::load(app, &server.proxy_id).await?;
+        steps.emit("proxy", format!("{} {}:{}", proxy.kind, proxy.host, proxy.port));
         let stream = crate::proxy::dial(&proxy, &server.host, server.port).await?;
+        steps.emit("dial", format!("{}:{}", server.host, server.port));
         client::connect_stream(config, stream, handler)
             .await
             .map_err(|e| format!("ssh handshake via proxy '{}' failed: {e}", proxy.name))
@@ -562,6 +618,7 @@ async fn open_session(app: &AppHandle, server: &SshServer) -> Result<Conn, Strin
     // "auth" column only picks the preferred/default method for the UI.
     let mut errors: Vec<String> = Vec::new();
     let mut authed = false;
+    steps.emit("auth", server.username.clone());
 
     if !server.private_key.trim().is_empty() {
         let pass = if server.key_passphrase.is_empty() {
@@ -817,12 +874,14 @@ pub async fn shell_open(
     cols: u32,
     rows: u32,
     term: &str,
+    tag: Option<String>,
 ) -> Result<String, String> {
     // Every terminal tab is a NEW connection built from the server's current
     // settings (proxy included) — not another channel on a shared one — so
     // tabs are independent and settings changes never kill open terminals.
     let server = load_server(app, server_id).await?;
-    let conn = match open_session(app, &server).await {
+    let steps = Steps(tag.map(|t| (app.clone(), t)));
+    let conn = match open_session(app, &server, steps.clone()).await {
         Ok(c) => c,
         Err(e) => {
             write_log(app, actor, &server, "connect", false, &e).await;
@@ -838,6 +897,7 @@ pub async fn shell_open(
             .unwrap_or_else(|_| "via proxy".into())
     };
     write_log(app, actor, &server, "connect", true, &format!("terminal connection ({via})")).await;
+    steps.emit("shell", term.to_string());
 
     let channel = conn
         .channel_open_session()
@@ -1038,6 +1098,9 @@ pub struct SftpEntry {
 #[serde(rename_all = "camelCase")]
 struct TransferProgress {
     server_id: String,
+    /// Opaque id from the caller (one per Files pane), so only the pane that
+    /// started a transfer shows its progress.
+    tag: Option<String>,
     file: String,
     done: u64,
     total: u64,
@@ -1144,6 +1207,7 @@ pub async fn sftp_download(
     server_id: &str,
     remote: &str,
     local: &str,
+    tag: Option<String>,
 ) -> Result<u64, String> {
     use tokio::io::AsyncWriteExt;
     let sftp = sftp_for(app, "user", server_id).await?;
@@ -1175,6 +1239,7 @@ pub async fn sftp_download(
             "ssh://transfer",
             TransferProgress {
                 server_id: server_id.to_string(),
+                tag: tag.clone(),
                 file: name.clone(),
                 done,
                 total,
@@ -1188,6 +1253,7 @@ pub async fn sftp_download(
         "ssh://transfer",
         TransferProgress {
             server_id: server_id.to_string(),
+            tag,
             file: name,
             done,
             total: done,
@@ -1205,6 +1271,7 @@ pub async fn sftp_upload(
     server_id: &str,
     local: &str,
     remote: &str,
+    tag: Option<String>,
 ) -> Result<u64, String> {
     use tokio::io::AsyncReadExt;
     let sftp = sftp_for(app, "user", server_id).await?;
@@ -1236,6 +1303,7 @@ pub async fn sftp_upload(
             "ssh://transfer",
             TransferProgress {
                 server_id: server_id.to_string(),
+                tag: tag.clone(),
                 file: name.clone(),
                 done,
                 total,
@@ -1249,6 +1317,7 @@ pub async fn sftp_upload(
         "ssh://transfer",
         TransferProgress {
             server_id: server_id.to_string(),
+            tag,
             file: name,
             done,
             total: done,
@@ -1275,7 +1344,9 @@ pub async fn sftp_read_text(
         ));
     }
     let bytes = sftp.read(remote).await.map_err(|e| format!("read failed: {e}"))?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    // Never lossy-convert: saving would write U+FFFD over the original bytes.
+    String::from_utf8(bytes)
+        .map_err(|_| "not UTF-8 text (binary or another encoding) — download it instead".to_string())
 }
 
 /// Renames/moves a remote path.
@@ -1376,6 +1447,7 @@ pub async fn sftp_write_chunk(
     offset: u64,
     total: u64,
     data: &[u8],
+    tag: Option<String>,
 ) -> Result<(), String> {
     use tokio::io::{AsyncSeekExt, AsyncWriteExt};
     let sftp = sftp_for(app, "user", server_id).await?;
@@ -1404,6 +1476,7 @@ pub async fn sftp_write_chunk(
         "ssh://transfer",
         TransferProgress {
             server_id: server_id.to_string(),
+            tag,
             file: remote.rsplit('/').next().unwrap_or(remote).to_string(),
             done,
             total,
@@ -2047,8 +2120,9 @@ pub async fn ssh_shell_open(
     cols: u32,
     rows: u32,
     term: Option<String>,
+    tag: Option<String>,
 ) -> Result<String, String> {
-    shell_open(&app, "user", &server_id, cols, rows, term.as_deref().unwrap_or("")).await
+    shell_open(&app, "user", &server_id, cols, rows, term.as_deref().unwrap_or(""), tag).await
 }
 
 #[tauri::command]
@@ -2092,8 +2166,9 @@ pub async fn ssh_sftp_download(
     server_id: String,
     remote: String,
     local: String,
+    tag: Option<String>,
 ) -> Result<u64, String> {
-    sftp_download(&app, &server_id, &remote, &local).await
+    sftp_download(&app, &server_id, &remote, &local, tag).await
 }
 
 #[tauri::command]
@@ -2102,8 +2177,9 @@ pub async fn ssh_sftp_upload(
     server_id: String,
     local: String,
     remote: String,
+    tag: Option<String>,
 ) -> Result<u64, String> {
-    sftp_upload(&app, &server_id, &local, &remote).await
+    sftp_upload(&app, &server_id, &local, &remote, tag).await
 }
 
 #[tauri::command]
@@ -2122,7 +2198,8 @@ pub async fn ssh_sftp_write_text(
 }
 
 /// Raw-body upload chunk: the bytes are the IPC body, the rest travels in
-/// headers (x-server-id, x-remote percent-encoded, x-offset, x-total).
+/// headers (x-server-id, x-remote percent-encoded, x-offset, x-total,
+/// optional x-tag).
 #[tauri::command]
 pub async fn ssh_sftp_write_chunk(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
@@ -2142,7 +2219,8 @@ pub async fn ssh_sftp_write_chunk(app: AppHandle, request: tauri::ipc::Request<'
         .into_owned();
     let offset: u64 = header("x-offset")?.parse().map_err(|_| "bad offset")?;
     let total: u64 = header("x-total")?.parse().map_err(|_| "bad total")?;
-    sftp_write_chunk(&app, &server_id, &remote, offset, total, data).await
+    let tag = header("x-tag").ok();
+    sftp_write_chunk(&app, &server_id, &remote, offset, total, data, tag).await
 }
 
 #[tauri::command]

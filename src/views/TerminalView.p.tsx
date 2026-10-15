@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { FolderOpen, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -9,7 +9,8 @@ import { readText as clipboardRead, writeText as clipboardWrite } from "@tauri-a
 import * as db from "../core/db.r";
 import type { SshServer } from "../core/types.i";
 import { DEFAULT_TERMINAL_THEME, terminalTheme } from "../components/code/TerminalTheme.s";
-import { Button, Spinner } from "../components";
+import { Button } from "../components";
+import { ConnectScreen, type ConnectStepState } from "./ConnectScreen.c";
 // import { OsLogo } from "../components/icons/OsLogo.c";
 
 /** Fallbacks for the ssh_* appearance settings (persisted in SQLite). */
@@ -45,8 +46,16 @@ interface LiveTerm {
   sessionId: string | null;
   status: TermStatus;
   error: string | null;
+  /** Connection steps reported so far (the connecting screen). */
+  steps: ConnectStepState[];
+  /** The shell came up at least once — later failures are not "connecting". */
+  opened: boolean;
   /** The mounted page (null while the tab is hidden). */
-  view: { setStatus: (s: TermStatus) => void; setError: (e: string | null) => void } | null;
+  view: {
+    setStatus: (s: TermStatus) => void;
+    setError: (e: string | null) => void;
+    setSteps: (s: ConnectStepState[]) => void;
+  } | null;
   onSession: (sessionId: string | null) => void;
   dead: boolean;
   cleanup: (() => void)[];
@@ -216,6 +225,8 @@ async function createLive(onSession: (sessionId: string | null) => void): Promis
     sessionId: null,
     status: "connecting",
     error: null,
+    steps: [],
+    opened: false,
     view: null,
     onSession,
     dead: false,
@@ -226,7 +237,7 @@ async function createLive(onSession: (sessionId: string | null) => void): Promis
 
 /** Opens the session of a fresh live terminal (its element is mounted and
  *  fitted by now, so cols×rows are the real ones). */
-async function connectLive(live: LiveTerm, server: SshServer) {
+async function connectLive(live: LiveTerm, server: SshServer, connId: string) {
   const { term } = live;
   // 2. Output listener FIRST, session second: the listener filters by
   //    sessionId, so wiring it before the session id exists is safe and
@@ -246,11 +257,16 @@ async function connectLive(live: LiveTerm, server: SshServer) {
         setLiveStatus(live, "closed");
         live.onSession(null);
       },
+      onConnectStep: (pl) => {
+        if (pl.tag !== connId || live.opened) return;
+        live.steps = [...live.steps, { step: pl.step, detail: pl.detail }];
+        live.view?.setSteps(live.steps);
+      },
     });
     live.cleanup.push(off);
     if (live.dead) return;
 
-    const sessionId = await db.sshShellOpen(server.id, term.cols, term.rows, live.termType);
+    const sessionId = await db.sshShellOpen(server.id, term.cols, term.rows, live.termType, connId);
     if (live.dead) {
       // Closed mid-connect — do not leak the shell we just opened.
       void db.sshShellClose(sessionId).catch(() => {});
@@ -265,7 +281,12 @@ async function connectLive(live: LiveTerm, server: SshServer) {
     if (live.dead) return;
     term.reset();
     if (snapshot.length) term.write(snapshot);
+    live.opened = true;
     setLiveStatus(live, "open");
+    // It was hidden behind the connecting screen — type straight into it now.
+    requestAnimationFrame(() => {
+      if (live.view) live.term.focus();
+    });
 
     // 4. Keyboard → PTY.
     const send = (data: string) => {
@@ -298,6 +319,7 @@ export function TerminalView({
   connId,
   onSession,
   onOpenFiles,
+  onEditServer,
   onClose,
 }: {
   server: SshServer;
@@ -306,12 +328,16 @@ export function TerminalView({
   /** Reports the live PTY session id up to the App (for targeted close). */
   onSession: (sessionId: string | null) => void;
   onOpenFiles: () => void;
+  /** Opens this server's settings (from a failed connect). */
+  onEditServer: () => void;
   onClose: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const existing = LIVE.get(connId);
   const [status, setStatus] = useState<TermStatus>(existing?.status ?? "connecting");
   const [error, setError] = useState<string | null>(existing?.error ?? null);
+  const [steps, setSteps] = useState<ConnectStepState[]>(existing?.steps ?? []);
+  const [opened, setOpened] = useState(existing?.opened ?? false);
   const [copied, setCopied] = useState(0);
   /** Bumped by Reconnect: the effect reruns with a fresh terminal. */
   const [nonce, setNonce] = useState(0);
@@ -331,10 +357,19 @@ export function TerminalView({
       const host = hostRef.current;
       if (!host || unmounted) return;
       live = l;
-      l.view = { setStatus, setError };
+      l.view = {
+        setStatus: (st) => {
+          setStatus(st);
+          setOpened(l.opened);
+        },
+        setError,
+        setSteps,
+      };
       l.onSession = onSession;
       setStatus(l.status);
       setError(l.error);
+      setSteps(l.steps);
+      setOpened(l.opened);
       host.style.backgroundColor = l.background;
       host.appendChild(l.el);
       if (!l.term.element) l.term.open(l.el);
@@ -368,7 +403,7 @@ export function TerminalView({
         LIVE.set(connId, l);
         wireClipboard(l, () => COPIED_BY_CONN.get(connId)?.());
         mount(l);
-        void connectLive(l, server);
+        void connectLive(l, server, connId);
       });
     }
 
@@ -399,6 +434,8 @@ export function TerminalView({
     disposeLive(connId);
     setStatus("connecting");
     setError(null);
+    setSteps([]);
+    setOpened(false);
     setNonce((n) => n + 1);
   };
 
@@ -414,16 +451,24 @@ export function TerminalView({
           error) — they never occupy layout space. */}
       {/* Detected-OS badge floats top-left (Rust probes it on connect).
           Logo only — no OS name text over the terminal. */}
-      {status === "connecting" && (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-surface)]/95 px-3.5 py-1.5 text-[12px] text-[var(--text-muted)] shadow-[var(--shadow-popup)] backdrop-blur">
-          <Spinner size={12} />
-          <span className="font-mono">
-            {server.username}@{server.host}
-          </span>
-        </div>
-      )}
+      {/* Until the shell is up the tab shows the connecting screen (steps,
+          then the error with Retry / Edit server / Close if it fails). It is
+          there from the very first frame (no fade-in), so the empty terminal
+          never flashes before it; it fades out once the shell is up. */}
+      <AnimatePresence initial={false}>
+        {!opened && (status === "connecting" || status === "error") && (
+          <ConnectScreen
+            server={server}
+            reached={steps}
+            error={status === "error" ? error : null}
+            onRetry={reconnect}
+            onEdit={onEditServer}
+            onClose={onClose}
+          />
+        )}
+      </AnimatePresence>
 
-      {(status === "closed" || status === "error") && (
+      {opened && (status === "closed" || status === "error") && (
         <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-surface)]/95 px-2 py-1.5 shadow-[var(--shadow-popup)] backdrop-blur">
           <Button
             variant="primary" size="xs"
@@ -448,7 +493,7 @@ export function TerminalView({
         </div>
       )}
 
-      {error && (
+      {opened && error && (
         <div className="pointer-events-none absolute left-1/2 top-14 z-10 max-w-[70%] -translate-x-1/2 rounded-full border border-[var(--diff-del)]/40 bg-[var(--bg-surface)]/95 px-3.5 py-1.5 text-[11.5px] text-[var(--diff-del)] shadow-[var(--shadow-popup)] backdrop-blur">
           <span className="block truncate" title={error}>{error}</span>
         </div>
@@ -461,7 +506,13 @@ export function TerminalView({
       )}
 
       {/* The terminal fills the entire window — xterm measures this box. */}
-      <div key={nonce} ref={hostRef} className="min-h-0 flex-1 overflow-hidden bg-[var(--bg-input)] px-1 py-1" />
+      {/* Hidden (still laid out, so xterm can measure it) until the shell is up. */}
+      <div
+        key={nonce}
+        ref={hostRef}
+        className="min-h-0 flex-1 overflow-hidden bg-[var(--bg-input)] px-1 py-1"
+        style={{ visibility: opened ? "visible" : "hidden" }}
+      />
     </motion.div>
   );
 }

@@ -42,7 +42,6 @@ export function SshSidebar({
   conns,
   groups,
   activeGroup,
-  connected,
   view,
   activePanel,
   onOpenConn,
@@ -70,8 +69,6 @@ export function SshSidebar({
   groups: ConnGroup[];
   /** Tab on screen (null when Units / Logs are). */
   activeGroup: string | null;
-  /** Server ids with a live pooled connection (accent dot). */
-  connected: string[];
   view: ViewKind;
   /** Row whose form is open in the right-hand panel (highlighted here). */
   activePanel: { kind: "server" | "key" | "script" | "proxy"; id?: string } | null;
@@ -272,7 +269,6 @@ export function SshSidebar({
             "servers",
             <UnitGroups kind="server" items={servers} variant="sidebar" onChanged={onUnitsChanged} onReorder={(ids) => onReorder("server", ids)} onHover={(id) => setHovered(id && "srv-" + id)}>
             {(s) => {
-              const live = connected.includes(s.id);
               const panelActive = activePanel?.kind === "server" && activePanel.id === s.id;
               const hoverKey = "srv-" + s.id;
               const isHover = hovered === hoverKey;
@@ -283,16 +279,9 @@ export function SshSidebar({
                     hovered={isHover}
                     onClick={() => onOpenConn(s.id, "terminal", true)}
                   >
-                    {/* OS logo (detected on connect) with a live dot */}
-                    <span className="relative shrink-0">
+                    {/* OS logo (detected on connect) */}
+                    <span className="shrink-0">
                       <OsLogo os={s.os} seed={s.id} name={s.name} size={20} />
-                      <span
-                        className={
-                          "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-[var(--bg-sidebar)] " +
-                          (live ? "bg-[var(--diff-add,#4ec9b0)]" : "bg-[var(--text-dim)]")
-                        }
-                        title={live ? "Connected" : "Idle"}
-                      />
                     </span>
                     <span className="truncate">{s.name}</span>
                     <span className="ml-auto shrink-0 truncate font-mono text-[10px] text-[var(--text-dim)]">

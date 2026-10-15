@@ -6,13 +6,12 @@ import {
   Plus,
   Pencil,
   Trash2,
-  X,
   ShieldAlert,
   Waypoints,
 } from "lucide-react";
 import * as db from "../core/db.r";
 import type { SshKey, SshProxy, SshScript, SshServer, UnitsTab } from "../core/types.i";
-import { OsLogo, Alert, Spinner, Button } from "../components";
+import { OsLogo, Alert, Button } from "../components";
 import { UnitGroups } from "../layout/UnitGroups.c";
 
 /**
@@ -28,16 +27,12 @@ export function UnitsView({
   keys,
   scripts,
   proxies,
-  connected,
-  busyIds,
-  notice,
   vaultBacked,
   tab,
   onTab,
   onChanged,
   onEditUnit,
   onAddUnit,
-  onConnect,
   onOpenTerminal,
   onReorder,
 }: {
@@ -45,9 +40,6 @@ export function UnitsView({
   keys: SshKey[];
   scripts: SshScript[];
   proxies: SshProxy[];
-  connected: string[];
-  busyIds: string[];
-  notice?: string | null;
   /** True when the vault master key is safely persisted. */
   vaultBacked: boolean;
   tab: UnitsTab;
@@ -58,7 +50,6 @@ export function UnitsView({
   onEditUnit: (target: { kind: UnitKind; id: string }) => void;
   /** Open the right-hand panel to create a unit of the given kind. */
   onAddUnit: (kind: UnitKind) => void;
-  onConnect: (id: string) => void;
   onOpenTerminal: (serverId: string) => void;
   /** A list was dragged into a new order (ids top to bottom). */
   onReorder: (kind: UnitKind, ids: string[]) => void;
@@ -117,11 +108,6 @@ export function UnitsView({
         </Button>
       </div>
 
-      {notice && (
-        <Alert className="mt-3" icon={<X size={13} />}>
-          <span title={notice}>{notice}</span>
-        </Alert>
-      )}
       {tab === "keys" && !vaultBacked && (
         <Alert className="mt-3" icon={<ShieldAlert size={13} />}>
           The vault master key could not be persisted — stored secrets will
@@ -144,9 +130,6 @@ export function UnitsView({
             <ServerGrid
               onChanged={onChanged}
               servers={servers}
-              connected={connected}
-              busyIds={busyIds}
-              onConnect={onConnect}
               onOpenTerminal={onOpenTerminal}
               onReorder={(ids) => onReorder("server", ids)}
               onEdit={(s) => onEditUnit({ kind: "server", id: s.id })}
@@ -335,9 +318,6 @@ function Empty({ kind }: { kind: UnitKind }) {
 function ServerGrid({
   onChanged,
   servers,
-  connected,
-  busyIds,
-  onConnect,
   onOpenTerminal,
   onReorder,
   onEdit,
@@ -345,9 +325,6 @@ function ServerGrid({
 }: {
   onChanged: () => void;
   servers: SshServer[];
-  connected: string[];
-  busyIds: string[];
-  onConnect: (id: string) => void;
   onOpenTerminal: (id: string) => void;
   onReorder: (ids: string[]) => void;
   onEdit: (s: SshServer) => void;
@@ -356,13 +333,11 @@ function ServerGrid({
   return (
     <UnitGroups kind="server" items={servers} variant="page" onReorder={onReorder} onChanged={onChanged}>
       {(s) => {
-        const live = connected.includes(s.id);
-        const busy = busyIds.includes(s.id);
         return (
             <div
               className={LIST_ROW + " cursor-pointer active:cursor-grabbing"}
-              onClick={() => (live ? onOpenTerminal(s.id) : onConnect(s.id))}
-              title={live ? "Open terminal — drag to reorder" : "Connect — drag to reorder"}
+              onClick={() => onOpenTerminal(s.id)}
+              title="Connect — drag to reorder"
             >
               <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
                 {/* OS logo when Rust detected the distro; initial avatar otherwise */}
@@ -371,18 +346,6 @@ function ServerGrid({
                 ) : (
                   <Avatar label={s.name} color={avatarColor(s.id)} icon={Server} />
                 )}
-                {busy && (
-                  <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
-                    <Spinner size={16} className="text-white" />
-                  </span>
-                )}
-                {/* Live dot on the avatar, Termius-style */}
-                <span
-                  className={
-                    "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--bg-surface)] " +
-                    (live ? "bg-[var(--diff-add,#4ec9b0)]" : "bg-[var(--text-dim)]")
-                  }
-                />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-medium text-[var(--text-main)]">{s.name}</span>

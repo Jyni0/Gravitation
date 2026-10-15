@@ -40,6 +40,18 @@ type OpenFile = {
 
 const joinRemote = (dir: string, name: string) => (dir.endsWith("/") ? dir : dir + "/") + name;
 
+/** State of each open Files pane (by connection id): its folder and the file
+ *  in the editor. Only the tab on screen is mounted, so this is what keeps a
+ *  pane's place — and unsaved edits — when you switch tabs and come back. */
+const paneState = new Map<string, { cwd?: string; file?: OpenFile | null }>();
+const patchPane = (connId: string, patch: { cwd?: string; file?: OpenFile | null }) =>
+  paneState.set(connId, { ...paneState.get(connId), ...patch });
+
+/** Drop a closed connection's remembered Files state (called by the App). */
+export function forgetFilesPane(connId: string) {
+  paneState.delete(connId);
+}
+
 /** Last opened folder per server, so a new Files tab starts where the previous one was. */
 const cwdKey = (serverId: string) => "dsh:files-cwd:" + serverId;
 const readSavedCwd = (serverId: string): string | null => {
@@ -99,10 +111,16 @@ async function readAll(dir: FsEntry): Promise<FsEntry[]> {
  */
 export function FilesView({
   server,
+  connId,
+  active,
   onOpenTerminal,
   onClose,
 }: {
   server: SshServer;
+  /** This pane's connection id: its own folder and its own transfer progress. */
+  connId: string;
+  /** Focused pane — only it answers page shortcuts (Ctrl+F, Ctrl+L). */
+  active: boolean;
   onOpenTerminal: () => void;
   onClose: () => void;
 }) {
@@ -113,7 +131,11 @@ export function FilesView({
   const [transfer, setTransfer] = useState<db.SshTransferProgress | null>(null);
   const busyRef = useRef(false);
   const cwdRef = useRef("~");
-  const [file, setFile] = useState<OpenFile | null>(null);
+  // A file still loading/saving when the pane went away is reopened/unlocked below.
+  const [file, setFile] = useState<OpenFile | null>(() => {
+    const f = paneState.get(connId)?.file ?? null;
+    return f && f.saving ? { ...f, saving: false } : f;
+  });
   /** Close pressed on an unsaved file: the button turns into "Discard?". */
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   /** Drag-and-drop upload: overlay while OS files hover the page. */
@@ -159,6 +181,7 @@ export function FilesView({
         cwdRef.current = target;
         setCwd(target);
         setEntries(list);
+        patchPane(connId, { cwd: target });
         saveCwd(server.id, target);
         return true;
       } catch (e) {
@@ -169,17 +192,17 @@ export function FilesView({
         busyRef.current = false;
       }
     },
-    [server.id],
+    [server.id, connId],
   );
 
   useEffect(() => {
-    // Reopen the last folder of this server; if it's gone, fall back to home.
-    const saved = readSavedCwd(server.id);
+    // Reopen this pane's folder, else the server's last one; if it's gone, fall back to home.
+    const saved = paneState.get(connId)?.cwd ?? readSavedCwd(server.id);
     void (async () => {
       if (saved && saved !== "~" && (await load(saved))) return;
       await load("~");
     })();
-  }, [load, server.id]);
+  }, [load, server.id, connId]);
 
   /** Go to the path typed in the toolbar: absolute, ~/…, or relative to the current folder. */
   const commitPath = async () => {
@@ -196,7 +219,8 @@ export function FilesView({
     let off: (() => void) | undefined;
     db.onSshEvent({
       onTransfer: (t) => {
-        if (t.serverId !== server.id) return;
+        // Other panes of the same server run their own transfers.
+        if (t.serverId !== server.id || t.tag !== connId) return;
         setTransfer(t);
         if (t.finished) setTimeout(() => setTransfer(null), 800);
       },
@@ -204,7 +228,7 @@ export function FilesView({
       off = fn;
     });
     return () => off?.();
-  }, [server.id]);
+  }, [server.id, connId]);
 
   const pickSave = async (suggestedName: string): Promise<string | null> => {
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -216,13 +240,19 @@ export function FilesView({
     return (await open({ multiple: false })) as string | null;
   };
 
+  /** A transfer failed midway: no "finished" event comes, so drop the bar here. */
+  const transferFailed = (err: unknown) => {
+    setTransfer(null);
+    setError(err instanceof Error ? err.message : String(err));
+  };
+
   const download = async (e: SftpEntry) => {
     const local = await pickSave(e.name);
     if (!local) return;
     try {
-      await db.sftpDownload(server.id, e.path, local);
+      await db.sftpDownload(server.id, e.path, local, connId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      transferFailed(err);
     }
   };
 
@@ -232,10 +262,10 @@ export function FilesView({
     const name = local.replace(/^.*[\\/]/, "");
     const remote = (cwd.endsWith("/") ? cwd : cwd + "/") + name;
     try {
-      await db.sftpUpload(server.id, local, remote);
+      await db.sftpUpload(server.id, local, remote, connId);
       await load(cwd);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      transferFailed(err);
     }
   };
 
@@ -272,6 +302,17 @@ export function FilesView({
   const fileRef = useRef(file);
   fileRef.current = file;
 
+  useEffect(() => {
+    patchPane(connId, { file });
+  }, [connId, file]);
+
+  // Came back to a pane whose file never finished loading — load it again.
+  useEffect(() => {
+    const f = fileRef.current;
+    if (f?.loading) void openFile({ name: f.name, path: f.path, isDir: false, size: 0, modified: 0 } as SftpEntry);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const closeFile = () => {
     if (file && file.text !== file.saved && !confirmDiscard) {
       setConfirmDiscard(true);
@@ -293,7 +334,7 @@ export function FilesView({
       for (const child of await readAll(entry)) await uploadEntry(child, remote);
     } else if (entry.isFile && entry.file) {
       const blob = await new Promise<File>((ok, err) => entry.file!(ok, err));
-      await db.sftpUploadBlob(server.id, remote, blob);
+      await db.sftpUploadBlob(server.id, remote, blob, connId);
     }
   };
 
@@ -312,9 +353,9 @@ export function FilesView({
     const loose = items.length === 0 ? Array.from(e.dataTransfer.files) : [];
     try {
       for (const entry of items) await uploadEntry(entry, target);
-      for (const f of loose) await db.sftpUploadBlob(server.id, joinRemote(target, f.name), f);
+      for (const f of loose) await db.sftpUploadBlob(server.id, joinRemote(target, f.name), f, connId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      transferFailed(err);
     }
     await load(cwd);
   };
@@ -384,9 +425,9 @@ export function FilesView({
     if (!dir) return;
     const sep = dir.includes("\\") ? "\\" : "/";
     try {
-      for (const f of files) await db.sftpDownload(server.id, f.path, dir.replace(/[\\/]$/, "") + sep + f.name);
+      for (const f of files) await db.sftpDownload(server.id, f.path, dir.replace(/[\\/]$/, "") + sep + f.name, connId);
     } catch (err) {
-      setError(errText(err));
+      transferFailed(err);
     }
   };
 
@@ -546,7 +587,7 @@ export function FilesView({
 
   // Ctrl+F on this page opens the folder filter (the editor has its own).
   useEffect(() => {
-    if (file) return;
+    if (file || !active) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && shortcutKey(e) === "F") {
         e.preventDefault();
@@ -559,7 +600,7 @@ export function FilesView({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [file]);
+  }, [file, active]);
 
   const parts = cwd.split("/").filter(Boolean);
   const crumbs = parts.map((seg, i) => ({ label: seg, path: "/" + parts.slice(0, i + 1).join("/") }));
