@@ -381,6 +381,7 @@ async fn load_server_unchecked(app: &AppHandle, id: &str) -> Result<SshServer, S
     let mut key_id: String = row.try_get("key_id").unwrap_or_default();
     let legacy_inline: String =
         vault::decrypt(&row.try_get::<String, _>("private_key").unwrap_or_default());
+    let password = vault::open_secret(&row.try_get::<String, _>("password").unwrap_or_default(), "password")?;
     let mut server = SshServer {
         id: row.try_get("id").unwrap_or_default(),
         name: row.try_get("name").unwrap_or_default(),
@@ -388,7 +389,7 @@ async fn load_server_unchecked(app: &AppHandle, id: &str) -> Result<SshServer, S
         port: row.try_get::<i64, _>("port").unwrap_or(22) as u16,
         username: row.try_get("username").unwrap_or_default(),
         auth: auth.clone(),
-        password: vault::decrypt(&row.try_get::<String, _>("password").unwrap_or_default()),
+        password,
         // Inline keys are no longer supported — the body comes from the
         // linked credential below; the legacy column is ignored.
         private_key: String::new(),
@@ -458,12 +459,12 @@ async fn load_key(app: &AppHandle, id: &str) -> Result<SshKey, String> {
     use sqlx::Row;
     let stored_key: String = row.try_get("private_key").unwrap_or_default();
     let stored_pass: String = row.try_get("passphrase").unwrap_or_default();
-    let plain_key = vault::decrypt(&stored_key);
+    let plain_key = vault::open_secret(&stored_key, "private key")?;
     Ok(SshKey {
         id: row.try_get("id").unwrap_or_default(),
         name: row.try_get("name").unwrap_or_default(),
         private_key: plain_key,
-        passphrase: vault::decrypt(&stored_pass),
+        passphrase: vault::open_secret(&stored_pass, "key passphrase")?,
         has_key: !stored_key.is_empty(),
         fingerprint: String::new(),
         comment: row.try_get("comment").unwrap_or_default(),
@@ -1546,10 +1547,10 @@ pub async fn save_server(app: &AppHandle, s: &SshServer) -> Result<String, Strin
     };
     // Keep the existing password when the field comes back blank; "-" is
     // the wire signal to REMOVE the stored password (key-only server).
-    let old_pass: String = if s.id.is_empty() {
-        String::new()
+    let (old_pass, old_host_key): (String, Option<String>) = if s.id.is_empty() {
+        (String::new(), None)
     } else {
-        let row = sqlx::query("SELECT password FROM ssh_servers WHERE id = $1")
+        let row = sqlx::query("SELECT password, host_key FROM ssh_servers WHERE id = $1")
             .bind(&id)
             .fetch_optional(&pool)
             .await
@@ -1557,9 +1558,12 @@ pub async fn save_server(app: &AppHandle, s: &SshServer) -> Result<String, Strin
         match row {
             Some(r) => {
                 use sqlx::Row;
-                r.try_get::<String, _>("password").unwrap_or_default()
+                (
+                    r.try_get::<String, _>("password").unwrap_or_default(),
+                    Some(r.try_get::<String, _>("host_key").unwrap_or_default()),
+                )
             }
-            None => String::new(),
+            None => (String::new(), None),
         }
     };
     let password = if s.password.trim() == "-" {
@@ -1576,6 +1580,10 @@ pub async fn save_server(app: &AppHandle, s: &SshServer) -> Result<String, Strin
     let host_key = if s.host_key.trim() == "-" {
         // "-" from the UI = clear the pinned fingerprint (reinstalled host).
         String::new()
+    } else if let Some(pinned) = old_host_key {
+        // The pin is written by connecting, not by the form: an edit form
+        // opened before the first connect must not send it back empty.
+        pinned
     } else {
         s.host_key.clone()
     };
@@ -1770,6 +1778,14 @@ pub async fn save_key(app: &AppHandle, k: &SshKey) -> Result<String, String> {
     let passphrase = if k.passphrase.is_empty() {
         old_pass.clone()
     } else {
+        // Only the passphrase changed: it must open the stored key, or the
+        // row would keep a key that no longer decrypts (and lose its
+        // public half / fingerprint below).
+        if k.private_key.trim().is_empty() && !old_key.is_empty() {
+            let body = vault::open_secret(&old_key, "private key")?;
+            decode_secret_key(body.trim(), Some(k.passphrase.as_str()))
+                .map_err(|e| format!("this passphrase does not open the saved key: {e}"))?;
+        }
         vault::encrypt(&k.passphrase)
     };
     // (Re)derive the plaintext display columns whenever the body/passphrase

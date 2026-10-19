@@ -14,6 +14,8 @@ use crate::{db, vault};
 
 /// Settings row that marks the import as done (it never runs twice).
 const DONE_KEY: &str = "imported_from_singularity";
+/// Settings row that marks the one-time secret recovery as done.
+const RESTORED_KEY: &str = "singularity_secrets_restored";
 
 /// Tables copied as-is, with the columns they hold secrets in.
 const TABLES: &[(&str, &str, &[&str])] = &[
@@ -58,6 +60,9 @@ pub async fn ssh_import_singularity(app: AppHandle) -> Result<usize, String> {
     // Already imported, units added by hand, or no Singularity install.
     if done.is_some() || have > 0 || !old.exists() {
         mark_done(&mut conn).await;
+        if old.exists() {
+            restore_missing_secrets(&mut conn, &old).await;
+        }
         return Ok(0);
     }
 
@@ -127,6 +132,65 @@ async fn copy_tables(conn: &mut sqlx::SqliteConnection) -> Result<usize, String>
         .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(servers as usize)
+}
+
+/// Once per device: units that came from Singularity but have an EMPTY
+/// password / key here (the import could not open them, or sync spread an
+/// empty copy) get it back from Singularity's database — same unit id, and
+/// only when Singularity's key opens it. Sync then sends them on to the
+/// other devices. Never touches a secret that is set.
+async fn restore_missing_secrets(conn: &mut sqlx::SqliteConnection, old: &std::path::Path) {
+    let done: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+        .bind(RESTORED_KEY)
+        .fetch_optional(&mut *conn)
+        .await
+        .ok()
+        .flatten();
+    if done.is_some() {
+        return;
+    }
+    // No key, nothing can be opened — try again on a later launch.
+    let Some(key) = vault::singularity_key() else { return };
+    if sqlx::query("ATTACH DATABASE $1 AS old")
+        .bind(old.to_string_lossy().to_string())
+        .execute(&mut *conn)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let mut restored = 0usize;
+    for (table, _, secrets) in TABLES {
+        for col in *secrets {
+            // The legacy inline key column is never used again.
+            if *table == "ssh_servers" && *col == "private_key" {
+                continue;
+            }
+            let q = format!(
+                "SELECT m.id, o.{col} FROM main.{table} m JOIN old.{table} o ON o.id = m.id WHERE m.{col} = '' AND o.{col} <> ''"
+            );
+            let Ok(rows) = sqlx::query_as::<_, (String, String)>(&q).fetch_all(&mut *conn).await else { continue };
+            for (id, stored) in rows {
+                let Some(plain) = vault::decrypt_with(&key, &stored).filter(|p| !p.is_empty()) else { continue };
+                let ok = sqlx::query(&format!("UPDATE main.{table} SET {col} = $1 WHERE id = $2 AND {col} = ''"))
+                    .bind(vault::encrypt(&plain))
+                    .bind(&id)
+                    .execute(&mut *conn)
+                    .await
+                    .is_ok();
+                restored += ok as usize;
+            }
+        }
+    }
+    let _ = sqlx::query("DETACH DATABASE old").execute(&mut *conn).await;
+    if restored > 0 {
+        eprintln!("[import] restored {restored} missing secrets from Singularity");
+        crate::sync::nudge();
+    }
+    let _ = sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, '1')")
+        .bind(RESTORED_KEY)
+        .execute(&mut *conn)
+        .await;
 }
 
 async fn mark_done(conn: &mut sqlx::SqliteConnection) {

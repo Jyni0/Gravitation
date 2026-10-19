@@ -406,6 +406,9 @@ pub async fn ensure_access(app: &AppHandle) -> Result<(), String> {
     if get_setting(&pool, "sync_config").await.is_none() {
         return Ok(()); // sync off: purely local
     }
+    if load_config(&pool).await.is_none() {
+        return Err(keys_lost_notice());
+    }
     // Boxed: sync_once can disconnect servers, which reaches load_server → here.
     let attempt = tokio::time::timeout(Duration::from_secs(20), Box::pin(sync_once(app))).await;
     if open_now() {
@@ -742,7 +745,19 @@ async fn apply(pool: &sqlx::SqlitePool, env: &Envelope) -> Result<(), String> {
     }
     let cols: Vec<&str> = s.text.iter().chain(s.int).chain(s.secret).copied().collect();
     let marks: Vec<String> = (2..=cols.len() + 1).map(|i| format!("${i}")).collect();
-    let sets: Vec<String> = cols.iter().map(|c| format!("{c}=excluded.{c}")).collect();
+    // Learned by connecting, not edited: another device that never connected
+    // sends them empty, which must not erase the pinned host key (or OS) here.
+    let keep_if_empty = |c: &str| s.kind == "server" && (c == "host_key" || c == "os");
+    let sets: Vec<String> = cols
+        .iter()
+        .map(|c| {
+            if keep_if_empty(c) {
+                format!("{c}=CASE WHEN excluded.{c} = '' THEN {}.{c} ELSE excluded.{c} END", s.table)
+            } else {
+                format!("{c}=excluded.{c}")
+            }
+        })
+        .collect();
     let q = format!(
         "INSERT INTO {} (id, {}) VALUES ($1, {}) ON CONFLICT(id) DO UPDATE SET {}",
         s.table,
@@ -769,6 +784,33 @@ async fn apply(pool: &sqlx::SqlitePool, env: &Envelope) -> Result<(), String> {
     Ok(())
 }
 
+/// Our copy of a unit wins a conflict, but where it has an EMPTY secret and
+/// the server's copy has one, the server's secret is taken into ours first.
+/// An empty password is what a unit has after a failed import or a lost
+/// vault key — letting it win wiped the real password on every device.
+/// Returns true when something was written.
+async fn merge_secrets(pool: &sqlx::SqlitePool, env: &Envelope, mine: &Map<String, Value>) -> Result<bool, String> {
+    let Some(s) = spec(&env.k) else { return Ok(false) };
+    if env.d {
+        return Ok(false);
+    }
+    let mut wrote = false;
+    for c in s.secret {
+        let ours = mine.get(*c).and_then(Value::as_str).unwrap_or_default();
+        let theirs = env.r.get(*c).and_then(Value::as_str).unwrap_or_default();
+        if ours.is_empty() && !theirs.is_empty() {
+            sqlx::query(&format!("UPDATE {} SET {c} = $1 WHERE id = $2", s.table))
+                .bind(vault::encrypt(theirs))
+                .bind(&env.i)
+                .execute(pool)
+                .await
+                .map_err(|e| format!("db error: {e}"))?;
+            wrote = true;
+        }
+    }
+    Ok(wrote)
+}
+
 /* ---------- one sync pass ---------- */
 
 enum PassError {
@@ -789,6 +831,13 @@ async fn pass(pool: &sqlx::SqlitePool, cfg: &Config, keys: &Keys, on_applied: &(
     let (local, unreadable) = read_local(pool, keys).await?;
     let mut cursor: i64 = get_setting(pool, "sync_cursor").await.and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut applied: HashSet<String> = HashSet::new();
+    // Secrets taken from the server into our own copy (see merge_secrets).
+    let mut merged = false;
+    // Units whose secrets no longer open here (the vault key changed) but
+    // that the server has: pull everything again so they are healed below.
+    if unreadable.iter().any(|id| state.get(id).is_some_and(|s| s.rev > 0)) {
+        cursor = 0;
+    }
 
     // 1. Pull everything newer than the cursor.
     loop {
@@ -817,6 +866,16 @@ async fn pass(pool: &sqlx::SqlitePool, cfg: &Config, keys: &Keys, on_applied: &(
                 continue;
             };
             let mut next = State { kind: env.k.clone(), unit: env.i.clone(), hash: String::new(), v: env.v, rev };
+            // Our copy can't be read here: the server's is the only good one.
+            if unreadable.contains(&id) && !env.d {
+                apply(pool, &env).await?;
+                applied.insert(id.clone());
+                next.v = next.v.max(st.as_ref().map(|s| s.v).unwrap_or(0));
+                next.hash = content_hash(keys, &env.k, &env.i, &env.r);
+                write_state(pool, &id, &next).await?;
+                state.insert(id, next);
+                continue;
+            }
             if let Some(s) = &st {
                 if env.v <= s.v {
                     // Our own push coming back, or a replayed old version.
@@ -843,6 +902,10 @@ async fn pass(pool: &sqlx::SqlitePool, cfg: &Config, keys: &Keys, on_applied: &(
                 };
                 if changed_here {
                     // Ours wins: keep the old hash so the push sends it (as v+1).
+                    // But a password/key we don't have never loses to "empty".
+                    if let Some(l) = mine {
+                        merged |= merge_secrets(pool, &env, &l.row).await?;
+                    }
                     next.hash = st.as_ref().map(|s| s.hash.clone()).unwrap_or_default();
                 } else if !unreadable.contains(&id) {
                     apply(pool, &env).await?;
@@ -860,7 +923,7 @@ async fn pass(pool: &sqlx::SqlitePool, cfg: &Config, keys: &Keys, on_applied: &(
     }
 
     // What we just wrote is what we now have: hash it as stored here.
-    let (local, unreadable) = if applied.is_empty() { (local, unreadable) } else { read_local(pool, keys).await? };
+    let (local, unreadable) = if applied.is_empty() && !merged { (local, unreadable) } else { read_local(pool, keys).await? };
     for id in &applied {
         if let (Some(l), Some(s)) = (local.get(id), state.get_mut(id)) {
             s.hash = l.hash.clone();
@@ -926,7 +989,10 @@ pub async fn sync_once(app: &AppHandle) -> Result<(), String> {
     let _guard = RUN.lock().await;
     let pool = sql(app).await.ok_or("database unavailable")?;
     let Some((cfg, keys)) = load_config(&pool).await else {
-        let off = off_status(&pool).await;
+        let mut off = off_status(&pool).await;
+        if get_setting(&pool, "sync_config").await.is_some() {
+            off.notice = keys_lost_notice();
+        }
         set_status(app, |s| *s = off);
         return Ok(());
     };
@@ -1007,6 +1073,12 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// Sync is set up but its keys don't open on this device (the vault key
+/// changed): nothing can sync or unlock until it joins again.
+fn keys_lost_notice() -> String {
+    "This device can't open its sync keys any more (its vault key changed). Join again in Settings → Sync with the setup code from another device and your passphrase — your units come back from the server.".into()
+}
+
 fn off_notice() -> String {
     "Sync was turned off: the passphrase was reset on another device, so this device was signed out and its synced units were removed. They are safe on the server — join again with the new setup code.".into()
 }
@@ -1071,7 +1143,13 @@ pub async fn sync_status(app: AppHandle) -> Status {
             locked: !open_now(),
             ..Status::default()
         },
-        None => off_status(&pool).await,
+        None => {
+            let mut off = off_status(&pool).await;
+            if get_setting(&pool, "sync_config").await.is_some() {
+                off.notice = keys_lost_notice();
+            }
+            off
+        }
     }
 }
 
@@ -1148,7 +1226,15 @@ async fn reset_keys_inner(
     new_master: &[u8; 32],
 ) -> Result<(), String> {
     let new = keys_from(new_master);
-    let (local, _) = read_local(pool, &new).await?;
+    let (local, unreadable) = read_local(pool, &new).await?;
+    // The server replaces EVERYTHING with what is sent here and the other
+    // devices then wipe theirs: a unit left out would be gone everywhere.
+    if !unreadable.is_empty() {
+        return Err(format!(
+            "{} unit(s) can't be decrypted on this device, so a reset here would delete them everywhere. Re-enter their passwords/keys (or reset from another device) first.",
+            unreadable.len()
+        ));
+    }
     let mut items = Vec::with_capacity(local.len());
     for (id, l) in &local {
         let env = Envelope { k: l.kind.clone(), i: l.id.clone(), v: 1, d: false, r: l.row.clone() };
@@ -1311,6 +1397,74 @@ mod tests {
         assert!(open(&keys_from(&[8u8; 32]), &id, &blob).is_none());
     }
 
+    /// A unit whose password is EMPTY here never wipes the real one: the
+    /// server's secret is taken into our copy before ours is pushed.
+    #[tokio::test]
+    async fn empty_secret_never_wins() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for m in crate::db::migrations() {
+            sqlx::raw_sql(m.sql).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO ssh_servers (id, name, host, password) VALUES ('srv-1', 'web', '10.0.0.1', ''), ('srv-2', 'db', '10.0.0.2', $1)")
+            .bind(vault::encrypt("mine"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let remote = |id: &str| {
+            let mut r = Map::new();
+            r.insert("password".into(), Value::String("theirs".into()));
+            Envelope { k: "server".into(), i: id.into(), v: 2, d: false, r }
+        };
+        let row = |pw: &str| {
+            let mut r = Map::new();
+            r.insert("password".into(), Value::String(pw.into()));
+            r
+        };
+        // Empty here → the server's password comes in.
+        assert!(merge_secrets(&pool, &remote("srv-1"), &row("")).await.unwrap());
+        // Set here → left alone (ours wins as before).
+        assert!(!merge_secrets(&pool, &remote("srv-2"), &row("mine")).await.unwrap());
+        let pw = |id: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let s: String = sqlx::query_scalar("SELECT password FROM ssh_servers WHERE id = $1").bind(id).fetch_one(&pool).await.unwrap();
+                vault::try_decrypt(&s).unwrap()
+            }
+        };
+        assert_eq!(pw("srv-1").await, "theirs");
+        assert_eq!(pw("srv-2").await, "mine");
+    }
+
+    /// A device that never connected sends the host key empty: applying its
+    /// edit keeps the key pinned here (and still takes the edit).
+    #[tokio::test]
+    async fn empty_host_key_keeps_pin() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        for m in crate::db::migrations() {
+            sqlx::raw_sql(m.sql).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO ssh_servers (id, name, host, host_key, os) VALUES ('srv-1', 'web', '10.0.0.1', 'SHA256:pinned', 'ubuntu')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut r = Map::new();
+        for (k, v) in [("name", "web-prod"), ("host", "10.0.0.1"), ("host_key", ""), ("os", "")] {
+            r.insert(k.into(), Value::String(v.into()));
+        }
+        apply(&pool, &Envelope { k: "server".into(), i: "srv-1".into(), v: 2, d: false, r }).await.unwrap();
+        let (name, pin, os): (String, String, String) =
+            sqlx::query_as("SELECT name, host_key, os FROM ssh_servers").fetch_one(&pool).await.unwrap();
+        assert_eq!((name.as_str(), pin.as_str(), os.as_str()), ("web-prod", "SHA256:pinned", "ubuntu"));
+    }
+
     #[test]
     fn urls() {
         assert_eq!(normalize_url("sync.example.com/").unwrap(), "https://sync.example.com");
@@ -1449,6 +1603,65 @@ mod e2e {
         let dump = page.to_string();
         assert!(!dump.contains("hunter2") && !dump.contains("web-prod") && !dump.contains("10.0.0.1"));
 
+        let res = call(&cfg, &keys, reqwest::Method::DELETE, "/v1/account", None).await.unwrap();
+        assert!(res.status().is_success());
+    }
+
+    /// The bug that wiped passwords: B has the same unit (same id, e.g. from
+    /// the Singularity import) but its password is EMPTY. B's copy wins the
+    /// first-sync merge — the empty password must not win with it.
+    #[tokio::test]
+    #[ignore]
+    async fn empty_password_does_not_spread() {
+        let (cfg, master, _) = account("correct horse battery").await;
+        let keys = keys_from(&master);
+        let a = device().await;
+        let b = device().await;
+        sqlx::query("INSERT INTO ssh_servers (id, name, host, password) VALUES ('srv-1', 'web', '10.0.0.1', $1)")
+            .bind(vault::encrypt("hunter2"))
+            .execute(&a)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ssh_servers (id, name, host, password) VALUES ('srv-1', 'web', '10.0.0.1', '')")
+            .execute(&b)
+            .await
+            .unwrap();
+        run(&a, &cfg, &keys).await;
+        run(&b, &cfg, &keys).await;
+        run(&a, &cfg, &keys).await;
+        for (name, dev) in [("A", &a), ("B", &b)] {
+            let pw: String = sqlx::query_scalar("SELECT password FROM ssh_servers").fetch_one(dev).await.unwrap();
+            assert_eq!(vault::try_decrypt(&pw).as_deref(), Some("hunter2"), "password on {name}");
+        }
+        let res = call(&cfg, &keys, reqwest::Method::DELETE, "/v1/account", None).await.unwrap();
+        assert!(res.status().is_success());
+    }
+
+    /// A device whose secrets no longer open (its vault key changed) gets
+    /// them back from the server instead of staying broken forever.
+    #[tokio::test]
+    #[ignore]
+    async fn unreadable_unit_is_healed() {
+        let (cfg, master, _) = account("correct horse battery").await;
+        let keys = keys_from(&master);
+        let a = device().await;
+        let b = device().await;
+        sqlx::query("INSERT INTO ssh_servers (id, name, host, password) VALUES ('srv-1', 'web', '10.0.0.1', $1)")
+            .bind(vault::encrypt("hunter2"))
+            .execute(&a)
+            .await
+            .unwrap();
+        run(&a, &cfg, &keys).await;
+        run(&b, &cfg, &keys).await;
+        // B's copy now holds ciphertext of some other key.
+        let junk = format!("enc:v1:{}", B64.encode(random::<40>()));
+        sqlx::query("UPDATE ssh_servers SET password = $1").bind(&junk).execute(&b).await.unwrap();
+        run(&b, &cfg, &keys).await;
+        let pw: String = sqlx::query_scalar("SELECT password FROM ssh_servers").fetch_one(&b).await.unwrap();
+        assert_eq!(vault::try_decrypt(&pw).as_deref(), Some("hunter2"));
+        // Healed, so the next pass has nothing to do.
+        switch_device();
+        assert_eq!(pass(&b, &cfg, &keys, &|| {}).await.ok(), Some(0));
         let res = call(&cfg, &keys, reqwest::Method::DELETE, "/v1/account", None).await.unwrap();
         assert!(res.status().is_success());
     }

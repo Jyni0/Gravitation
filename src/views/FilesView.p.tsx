@@ -129,7 +129,8 @@ export function FilesView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transfer, setTransfer] = useState<db.SshTransferProgress | null>(null);
-  const busyRef = useRef(false);
+  /** Number of the newest load — an older one finishing late is ignored. */
+  const loadSeq = useRef(0);
   const cwdRef = useRef("~");
   // A file still loading/saving when the pane went away is reopened/unlocked below.
   const [file, setFile] = useState<OpenFile | null>(() => {
@@ -158,11 +159,13 @@ export function FilesView({
   /** Typed path in the toolbar; null = breadcrumbs shown. */
   const [pathDraft, setPathDraft] = useState<string | null>(null);
 
-  /** Opens a folder; false if it couldn't be listed (the error is shown). */
+  /** Opens a folder: true = shown, false = couldn't be listed (the error is
+   *  shown), null = a newer load overtook it. Never dropped while another
+   *  runs: the newest wins. */
   const load = useCallback(
-    async (path: string): Promise<boolean> => {
-      if (busyRef.current) return false;
-      busyRef.current = true;
+    async (path: string): Promise<boolean | null> => {
+      const mine = ++loadSeq.current;
+      const latest = () => mine === loadSeq.current;
       setLoading(true);
       setError(null);
       try {
@@ -172,6 +175,7 @@ export function FilesView({
           target = path === "~" ? home : normalizeRemote(joinRemote(home, path.slice(2)));
         }
         const list = await db.sftpList(server.id, target);
+        if (!latest()) return null;
         // A new folder starts with no selection and no filter.
         if (cwdRef.current !== target) {
           setSelected(new Set());
@@ -185,11 +189,11 @@ export function FilesView({
         saveCwd(server.id, target);
         return true;
       } catch (e) {
+        if (!latest()) return null;
         setError(e instanceof Error ? e.message : String(e));
         return false;
       } finally {
-        setLoading(false);
-        busyRef.current = false;
+        if (latest()) setLoading(false);
       }
     },
     [server.id, connId],
@@ -199,7 +203,8 @@ export function FilesView({
     // Reopen this pane's folder, else the server's last one; if it's gone, fall back to home.
     const saved = paneState.get(connId)?.cwd ?? readSavedCwd(server.id);
     void (async () => {
-      if (saved && saved !== "~" && (await load(saved))) return;
+      // Only a real failure falls back — not a load overtaken by a newer one.
+      if (saved && saved !== "~" && (await load(saved)) !== false) return;
       await load("~");
     })();
   }, [load, server.id, connId]);

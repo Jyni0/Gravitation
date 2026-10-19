@@ -60,53 +60,93 @@ pub fn singularity_key() -> Option<[u8; 32]> {
     key_from_b64(&std::fs::read_to_string(path).ok()?)
 }
 
+/// The master key. Held under one lock from lookup to creation, so two
+/// threads on first run can never each make (and store) a different key.
+/// A NEW key is made only when none exists anywhere: an existing key is
+/// never overwritten — that would leave every stored secret unreadable.
 fn load_master() -> [u8; 32] {
+    let mut guard = MASTER.lock().unwrap_or_else(|e| e.into_inner());
     // 1. Cached in memory.
-    if let Ok(guard) = MASTER.lock() {
-        if let Some(k) = guard.as_ref() {
-            return *k;
-        }
+    if let Some(k) = guard.as_ref() {
+        return *k;
     }
-    // 2. OS credential store.
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
-        if let Some(key) = entry.get_password().ok().and_then(|b64| key_from_b64(&b64)) {
-            cache_master(key);
-            return key;
-        }
-        // First run: create and persist a fresh key.
-        let key = Key::<Aes256Gcm>::generate();
-        let bytes: [u8; 32] = key.into();
-        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-        if entry.set_password(&b64).is_ok() {
-            cache_master(bytes);
-            return bytes;
-        }
-    }
-    // 3. Fallback file (still out-of-band from the database).
-    if let Some(dir) = fallback_path() {
-        let path = dir.join("vault.key");
-        if let Some(key) = std::fs::read_to_string(&path).ok().and_then(|b64| key_from_b64(&b64)) {
-            cache_master(key);
-            return key;
-        }
-        let key = Key::<Aes256Gcm>::generate();
-        let bytes: [u8; 32] = key.into();
-        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-        let _ = std::fs::create_dir_all(&dir);
-        if std::fs::write(&path, b64).is_ok() {
-            cache_master(bytes);
-            return bytes;
-        }
-    }
-    // 4. Last resort: ephemeral key — secrets decrypt only this session.
-    let key = Key::<Aes256Gcm>::generate();
-    key.into()
-}
-
-fn cache_master(key: [u8; 32]) {
-    if let Ok(mut guard) = MASTER.lock() {
+    let (key, lasting) = find_or_create_master();
+    // A stand-in key (store unreachable) is not remembered: the next call
+    // looks for the real one again instead of using it all session.
+    if lasting {
         *guard = Some(key);
     }
+    key
+}
+
+/// The key, and whether it is the real (persisted) one.
+fn find_or_create_master() -> ([u8; 32], bool) {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok();
+    let file = fallback_path().map(|d| d.join("vault.key"));
+
+    // 2. OS credential store — a busy store gets a few more tries.
+    let mut read = entry.as_ref().map(|e| e.get_password());
+    for _ in 0..3 {
+        if !matches!(read, Some(Err(ref e)) if !matches!(e, keyring::Error::NoEntry)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        read = entry.as_ref().map(|e| e.get_password());
+    }
+    let keyring_missing = match read {
+        Some(Ok(b64)) => match key_from_b64(&b64) {
+            Some(k) => return (k, true),
+            None => {
+                eprintln!("[vault] the stored master key is malformed — not replacing it");
+                false
+            }
+        },
+        Some(Err(keyring::Error::NoEntry)) => true,
+        Some(Err(e)) => {
+            // Locked / unavailable right now: NOT "no key" — creating one
+            // here would orphan every secret sealed with the real key.
+            eprintln!("[vault] credential store unavailable: {e}");
+            false
+        }
+        None => false,
+    };
+
+    // 3. Fallback file (still out-of-band from the database).
+    if let Some(k) = file.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|b64| key_from_b64(&b64)) {
+        // Keep a copy in the credential store when it has none yet.
+        if keyring_missing {
+            if let Some(e) = &entry {
+                let _ = e.set_password(&base64::engine::general_purpose::STANDARD.encode(k));
+            }
+        }
+        return (k, true);
+    }
+
+    // 4. Nothing anywhere: first run — create one and persist it.
+    let bytes: [u8; 32] = Key::<Aes256Gcm>::generate().into();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    if keyring_missing {
+        if let Some(e) = &entry {
+            if e.set_password(&b64).is_ok() {
+                return (bytes, true);
+            }
+        }
+    }
+    if let Some(path) = &file {
+        if !path.exists() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if std::fs::write(path, &b64).is_ok() {
+                return (bytes, true);
+            }
+        }
+    }
+    // 5. Last resort: a stand-in, not remembered (see load_master). Secrets
+    //    sealed with it can't be opened later; stored ones simply fail to
+    //    open meanwhile (clear error, and sync leaves them alone).
+    eprintln!("[vault] master key unavailable — using a temporary key");
+    (bytes, false)
 }
 
 /// True when the master key is safely persisted (keyring or file).
@@ -156,6 +196,15 @@ pub fn decrypt(stored: &str) -> String {
 /// a failure is not mistaken for an empty secret).
 pub fn try_decrypt(stored: &str) -> Option<String> {
     decrypt_with(&load_master(), stored)
+}
+
+/// Decrypts a secret that is about to be USED (connecting): one that is
+/// stored but does not open is an error naming `what`, never an empty
+/// value — that looked like "no password configured" and hid the cause.
+pub fn open_secret(stored: &str, what: &str) -> Result<String, String> {
+    try_decrypt(stored).ok_or_else(|| {
+        format!("the saved {what} can't be decrypted on this device (its vault key changed) — enter it again in the settings")
+    })
 }
 
 /// Decrypts a vault value with a given master key (None = it does not open).

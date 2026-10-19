@@ -57,7 +57,7 @@ fn validate(p: &SshProxy) -> Result<(), String> {
     Ok(())
 }
 
-fn from_row(r: &sqlx::sqlite::SqliteRow, with_secret: bool) -> SshProxy {
+fn from_row(r: &sqlx::sqlite::SqliteRow) -> SshProxy {
     use sqlx::Row;
     let stored: String = r.try_get("password").unwrap_or_default();
     SshProxy {
@@ -67,7 +67,7 @@ fn from_row(r: &sqlx::sqlite::SqliteRow, with_secret: bool) -> SshProxy {
         host: r.try_get("host").unwrap_or_default(),
         port: r.try_get::<i64, _>("port").unwrap_or(0) as u16,
         username: r.try_get("username").unwrap_or_default(),
-        password: if with_secret { vault::decrypt(&stored) } else { String::new() },
+        password: String::new(),
         has_password: !stored.is_empty(),
         group: r.try_get("group_name").unwrap_or_default(),
     }
@@ -81,7 +81,7 @@ pub async fn list(app: &AppHandle) -> Result<Vec<SshProxy>, String> {
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("db error: {e}"))?;
-    Ok(rows.iter().map(|r| from_row(r, false)).collect())
+    Ok(rows.iter().map(from_row).collect())
 }
 
 /// The proxy with its password decrypted — for dialing only.
@@ -93,7 +93,11 @@ pub async fn load(app: &AppHandle, id: &str) -> Result<SshProxy, String> {
         .await
         .map_err(|e| format!("db error: {e}"))?
         .ok_or_else(|| format!("the server's proxy no longer exists ({id}) — pick another one in its settings"))?;
-    Ok(from_row(&row, true))
+    use sqlx::Row;
+    let mut p = from_row(&row);
+    // A stored password that doesn't open is an error, not "no password".
+    p.password = vault::open_secret(&row.try_get::<String, _>("password").unwrap_or_default(), "proxy password")?;
+    Ok(p)
 }
 
 pub async fn save(app: &AppHandle, p: &SshProxy) -> Result<String, String> {
